@@ -15,3 +15,7 @@
 ### Domain docs
 
 single-context：根目录一份 `GLOSSARY.md`，架构决定放 `docs/adr/`。See `docs/agents/domain.md`.
+
+### Repo access
+
+协作者角色、`write` 权限边界、`main` 分支保护（必须走 PR、1 个批准、禁强推）。See `docs/agents/collaborators.md`.
