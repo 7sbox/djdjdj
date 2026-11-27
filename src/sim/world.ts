@@ -8,6 +8,7 @@ import { basicSkillFor, skillFitsWeapon, skillsForWeapon } from '../data/skills'
 import { randomSlot, rollDrop, rollItem, salvageYield } from './loot';
 import type { Item, SlotId } from '../types';
 
+
 /** 固定逻辑帧：0.2 秒。渲染层插值，逻辑层不受帧率影响。 */
 export const TICK_SECONDS = 0.2;
 
@@ -248,7 +249,12 @@ function spawnPos(
   // 留 0.5 米余量：既避开浮点误差把「刚好在圈上」算成圈外，
   // 也避开仇恨判定用的是严格比较边缘。
   const maxDist = Math.max(0.5, aggroRange - 0.5);
-  const minDist = Math.min(SPAWN_RADIUS_MIN, maxDist);
+
+  // 内径不能顶到外径上，否则半径退化成定值，同种怪全叠在一个圆周上，
+  // 看着像「一圈怪站在同一个圈里」。仇恨圈只比余量多一点时（石傀 7 米），
+  // 就把环带整体收窄，但至少留 40% 的纵深。
+  const minDist = Math.min(SPAWN_RADIUS_MIN, maxDist * 0.6);
+
   const angle = rng.next() * Math.PI * 2;
   const radius = minDist + rng.next() * (maxDist - minDist);
   return {
@@ -495,12 +501,15 @@ export function stepWorld(state: WorldState, deps: WorldDeps): void {
       rng,
     );
     if (dropRes.drop && dropRes.rarityRoll) {
-      const howMany = def.tier === 'boss' ? 3 : m.elite ? rng.int(1, 2) : 1;
+      const isBoss = def.tier === 'boss';
+      const howMany = isBoss ? 3 : m.elite ? rng.int(1, 2) : 1;
       for (let i = 0; i < howMany; i++) {
-        const rarity = i === 0 && def.tier === 'boss'
-          ? (dropRes.rarityRoll === 'common' || dropRes.rarityRoll === 'green'
-              ? 'purple'
-              : dropRes.rarityRoll)
+        // Boss 的 3 件里第一件**必定**是紫：这是规格 §三 的保底，
+        // 也是「打完 Boss 有回报」的全部支点。以前只在掷到凡品/精良时才转紫，
+        // 掷到稀有就照蓝掉，跨种子实测 3.7% 的 Boss 一件紫都没有 —— 保底必须是硬的。
+        // 掷到传说时保留传说（比紫更好，不该被降级）。
+        const rarity: Item['rarity'] = isBoss && i === 0
+          ? (dropRes.rarityRoll === 'orange' ? 'orange' : 'purple')
           : dropRes.rarityRoll;
         const item = rollItem(
           {

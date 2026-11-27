@@ -136,6 +136,16 @@ describe('刷起来爽不爽：掉落节奏与品质梯度', () => {
     expect(blue!).toBeLessThan(purple!);
   });
 
+  it('规格里写的节奏数字与实测相符（防止文档再次漂移）', () => {
+    // 规格 §二 的表格是给人看的承诺，不是装饰。把它钉在这里，
+    // 谁改了数值却没更新文档（或反过来）都会当场红。
+    const blue = medianOf(120 * MIN, (r) => r.first.blue)! / MIN;
+    const purple = medianOf(120 * MIN, (r) => r.first.purple)! / MIN;
+    expect(blue, `实测蓝装中位 ${blue.toFixed(1)} 分钟，规格写约 2 分钟`).toBeLessThanOrEqual(6);
+    expect(purple, `实测紫装中位 ${purple.toFixed(1)} 分钟，规格写约 7 分钟`).toBeLessThanOrEqual(15);
+    expect(purple, '紫装比蓝装还早，梯度反了').toBeGreaterThan(blue);
+  });
+
   it('紫色是塔尖：比绿少一个数量级，比蓝也明显少', () => {
     // 紫色产量最终由「Boss 必掉紫 + 自动跑图」决定，不是由权重决定的。
     // 所以这里守的是「梯度关系」而不是绝对件数 —— 规格 §二 的「2 小时第一件紫」
