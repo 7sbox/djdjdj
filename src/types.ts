@@ -94,7 +94,11 @@ export interface MonsterDef {
   damageType: DamageType;
   hp: number;
   damage: number;
-  /** 每逻辑帧移动速度（米/帧）。 */
+  /**
+   * 每逻辑帧移动距离（米/帧）。实际秒速 = speed / TICK_SECONDS（0.2 秒一帧）。
+   * 刷怪以玩家为圆心、落在该怪自己的仇恨圈内（见 world.ts 的 spawnPos），
+ * 所以移动速度要按「最远 20 秒内够得着人」标定，而不是按房间尺寸。
+   */
   speed: number;
   /** 攻击距离（米）。近战约 1.5，远程 6–9。 */
   range: number;
