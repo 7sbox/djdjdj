@@ -1,4 +1,4 @@
-import type { Item } from '../types';
+import type { Item, WeaponKind } from '../types';
 import { rollItem } from '../sim/loot';
 import type { Rng } from '../sim/rng';
 
@@ -23,7 +23,9 @@ export interface SaveData {
     ore: number;
     reforgeStones: number;
     potions: number;
-    weaponKind: 'sword' | 'blade';
+    /** 由身上的武器决定，读档后重算一次为准 —— 见 weaponKindFromEquipped。 */
+    /** 由身上的武器决定，读档后按装备重算一次为准 —— 见 weaponKindFromEquipped。 */
+    weaponKind: WeaponKind;
   };
   equipped: Record<string, Item>;
   inventory: Item[];

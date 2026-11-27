@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Item, SlotId } from '../types';
-import { FLOORS, floorById, skillById } from '../data/combat-defs';
+import { FLOORS, floorById } from '../data/combat-defs';
+import { skillsForWeapon } from '../data/skills';
 import { ITEM_DEFS, RARITY_NAMES } from '../data/items';
 import { createRng, type Rng } from '../sim/rng';
 import { rollItem } from '../sim/loot';
 import {
   DEFAULT_KILL_RATE,
+  DEFAULT_WEAPON_KIND,
   POTION_PRICE,
   TICK_SECONDS,
   buyPotion,
@@ -15,7 +17,9 @@ import {
   playerStats,
   reenterFloor,
   resumeFarming,
+  setWeaponKind,
   stepWorld,
+  weaponKindFromEquipped,
   type WorldState,
 } from '../sim/world';
 import {
@@ -107,7 +111,8 @@ export function App() {
         world.player.ore = saved.player.ore;
         world.player.reforgeStones = saved.player.reforgeStones;
         world.player.potions = saved.player.potions;
-        world.player.weaponKind = saved.player.weaponKind;
+        // 武器谱系以身上那把为准：存档里的字段只为兼容旧档，装备变了就跟着变
+        world.player.weaponKind = weaponKindFromEquipped(gear);
         world.controls = {
           ...world.controls,
           ...saved.controls,
@@ -241,8 +246,8 @@ export function App() {
       const s = playerStats(world, next);
       world.player.maxHp = s.hp;
       world.player.hp = Math.min(world.player.hp, s.hp);
-      if (item.defId.includes('blade')) world.player.weaponKind = 'blade';
-      else if (item.defId.includes('sword')) world.player.weaponKind = 'sword';
+      // 武器决定武学：技能栏跟着换，冷却表跟着重置
+      setWeaponKind(world, weaponKindFromEquipped(next));
     }
     setMessage(`已装备 ${itemName(item)}`);
   };
@@ -404,11 +409,10 @@ export function App() {
                 <i style={`width:${(expRatio * 100).toFixed(1)}%`} />
               </div>
               <div class="skills">
-                {['sk_sword_basic', 'sk_sword_swirl', 'sk_sword_pierce', 'sk_sword_step'].map((id) => {
-                  const def = skillById(id);
-                  const cd = world?.player.cooldowns[id] ?? 0;
+                {skillsForWeapon(world?.player.weaponKind ?? DEFAULT_WEAPON_KIND).map((def) => {
+                  const cd = world?.player.cooldowns[def.id] ?? 0;
                   return (
-                    <div class={`slot ${cd <= 0 ? 'ready' : ''}`}>
+                    <div key={def.id} class={`slot ${cd <= 0 ? 'ready' : ''}`}>
                       {def.name.slice(0, 2)}
                       {cd > 0 ? <div class="cd num">{cd.toFixed(1)}</div> : null}
                     </div>
@@ -596,6 +600,7 @@ export function App() {
                 exp={world?.player.exp ?? 0}
                 expToNext={expToNext}
                 killLog={world?.log ?? []}
+                weaponKind={world?.player.weaponKind ?? DEFAULT_WEAPON_KIND}
               />
             )}
           </aside>
