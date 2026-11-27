@@ -1,6 +1,6 @@
 import type { Item, SlotId, WeaponKind } from '../types';
 import { WEAPON_BY_KIND } from '../data/items';
-import { skillsForWeapon } from '../data/skills';
+import { skillsForWeaponWithLearned } from '../data/skills';
 import { HoverCard, ItemCard, ItemRow, SlotGrid } from './ItemCard';
 
 export interface BagProps {
@@ -183,6 +183,10 @@ export function CharacterPage(props: {
   expToNext: number;
   killLog: { t: number; text: string }[];
   weaponKind: WeaponKind;
+  /** 已习得的秘籍招式 id，决定武学列表里显不显示秘籍招。 */
+  learnedSkillIds?: readonly string[];
+  /** 插在战斗记录之前的附加内容（秘籍区）。 */
+  after?: preact.ComponentChildren;
 }) {
   // 武器决定武学：这一页列的就是当前这把武器能用的四招
   const weaponName = WEAPON_BY_KIND.get(props.weaponKind)?.name ?? '空手';
@@ -203,16 +207,20 @@ export function CharacterPage(props: {
 
       <h4>武学（{weaponName}）</h4>
       <div class="list">
-        {skillsForWeapon(props.weaponKind).map((sk) => (
+        {skillsForWeaponWithLearned(props.weaponKind, props.learnedSkillIds ?? []).map((sk) => (
           <div key={sk.id} class="row" style="cursor:default">
             <span class="nm">{sk.name}</span>
-            <span class="tag">{sk.slot === 0 ? '普攻' : `${sk.unlockLevel} 级`}</span>
+            <span class="tag">
+              {sk.slot === 0 ? '普攻' : sk.unlockLevel === 0 ? '秘籍' : `${sk.unlockLevel} 级`}
+            </span>
           </div>
         ))}
       </div>
       <div class="note" style="margin-top:6px">
         技能默认自动释放，你只决定优先级顺序（在战斗页拖动）。
       </div>
+
+      {props.after}
 
       <h4>战斗记录</h4>
       <div class="log">

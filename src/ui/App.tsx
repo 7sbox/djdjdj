@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Item, SlotId } from '../types';
-import { FLOORS, floorById } from '../data/combat-defs';
-import { skillsForWeapon } from '../data/skills';
+import { FLOORS, floorById, skillById } from '../data/combat-defs';
+import { equippedSkillBar } from '../data/skills';
 import { ITEM_DEFS, RARITY_NAMES } from '../data/items';
 import { createRng, type Rng } from '../sim/rng';
 import { rollItem } from '../sim/loot';
+import { drawScroll, fragmentOwner, allLearnedSkillIds, emptyManualState } from '../sim/manual';
+import { ManualPage, SlotChoice } from './ManualPage';
 import {
   DEFAULT_KILL_RATE,
   DEFAULT_WEAPON_KIND,
@@ -64,6 +66,11 @@ export function App() {
   const [hover, setHover] = useState<{ item: Item | null; x: number; y: number } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [offlineNote, setOfflineNote] = useState<string | null>(null);
+  const [lastDraw, setLastDraw] = useState<{
+    fragmentName: string;
+    duplicate: boolean;
+    completed: boolean;
+  } | null>(null);
   const [saveNotice, setSaveNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const [, forceTick] = useState(0);
@@ -113,6 +120,10 @@ export function App() {
         floorId: saved?.floorId ?? 'f1',
         equipped: gear,
         malice: saved?.malice ?? 0,
+        // 旧存档没有 manual 字段，按空收藏处理
+        manual: saved?.manual
+          ? { fragments: [...saved.manual.fragments], completed: [...saved.manual.completed] }
+          : { fragments: [], completed: [] },
       });
 
       if (saved) {
@@ -121,6 +132,8 @@ export function App() {
         world.player.gold = saved.player.gold;
         world.player.ore = saved.player.ore;
         world.player.reforgeStones = saved.player.reforgeStones;
+        // 旧存档没有残页，按 0 处理
+        world.player.scrollPages = saved.player.scrollPages ?? 0;
         world.player.potions = saved.player.potions;
         // 武器谱系以身上那把为准：存档里的字段只为兼容旧档，装备变了就跟着变
         world.player.weaponKind = weaponKindFromEquipped(gear);
@@ -220,8 +233,13 @@ export function App() {
         gold: world.player.gold,
         ore: world.player.ore,
         reforgeStones: world.player.reforgeStones,
+        scrollPages: world.player.scrollPages,
         potions: world.player.potions,
         weaponKind: world.player.weaponKind,
+      },
+      manual: {
+        fragments: [...world.manual.fragments],
+        completed: [...world.manual.completed],
       },
       equipped: equippedRef.current as Record<string, Item>,
       inventory: inventoryRef.current,
@@ -452,6 +470,52 @@ export function App() {
     setMessage(`合成出 ${itemName(res.value.item)}。`);
   };
 
+  /** 抽一张秘籍残卷。金币与残页都从世界状态里扣，抽到什么都如实告诉玩家。 */
+  const doDraw = () => {
+    const world = worldRef.current;
+    const rng = rngRef.current;
+    if (!world || !rng) return;
+
+    const res = drawScroll(
+      world.manual,
+      { gold: world.player.gold, scrollPages: world.player.scrollPages },
+      rng,
+    );
+    if (!res.ok) {
+      setMessage(res.reason);
+      setLastDraw(null);
+      return;
+    }
+
+    // 收下结果：收藏、钱包一起换新
+    world.manual = res.value.manual;
+    world.player.gold = res.value.wallet.gold;
+    world.player.scrollPages = res.value.wallet.scrollPages;
+
+    const owner = fragmentOwner(res.value.fragmentId);
+    const idx = owner ? owner.fragments.indexOf(res.value.fragmentId) : -1;
+    const label = owner && idx >= 0 ? `《${owner.name}》卷${['一', '二', '三', '四'][idx]}` : '残卷';
+
+    setLastDraw({
+      fragmentName: label,
+      duplicate: res.value.duplicate,
+      completed: res.value.completedManualId !== null,
+    });
+    setMessage(res.value.duplicate ? `重复，返还残页。` : `抽到 ${label}。`);
+    forceTick((t) => t + 1);
+  };
+
+  /** 在 2 号主动槽里选一招装上（穿云式 vs 连星贯日）。 */
+  const chooseSlot2 = (skillId: string) => {
+    const world = worldRef.current;
+    if (!world) return;
+    // 优先级表只是顺序偏好：把它排到最前，等于「装配」这一招
+    const rest = world.controls.skillPriority.filter((id) => id !== skillId);
+    world.controls.skillPriority = [skillId, ...rest];
+    setMessage(`已换上 ${skillById(skillId).name}。`);
+    forceTick((t) => t + 1);
+  };
+
   const world = worldRef.current;
   const stats = world ? playerStats(world, equipped) : null;
   const summary = stats ? statSummary(stats) : [];
@@ -476,6 +540,7 @@ export function App() {
           <span class="stat">金 <b class="num">{world?.player.gold ?? 0}</b></span>
           <span class="stat">矿 <b class="num">{world?.player.ore ?? 0}</b></span>
           <span class="stat">石 <b class="num">{world?.player.reforgeStones ?? 0}</b></span>
+          <span class="stat">残页 <b class="num">{world?.player.scrollPages ?? 0}</b></span>
           <span class="stat">丹 <b class="num">{world?.player.potions ?? 0}</b></span>
           <button
             class="btn"
@@ -528,7 +593,11 @@ export function App() {
                 <i style={`width:${(expRatio * 100).toFixed(1)}%`} />
               </div>
               <div class="skills">
-                {skillsForWeapon(world?.player.weaponKind ?? DEFAULT_WEAPON_KIND).map((def) => {
+                {equippedSkillBar(
+                  world?.player.weaponKind ?? DEFAULT_WEAPON_KIND,
+                  world ? allLearnedSkillIds(world.manual) : [],
+                  world?.controls.skillPriority ?? [],
+                ).map((def) => {
                   const cd = world?.player.cooldowns[def.id] ?? 0;
                   return (
                     <div key={def.id} class={`slot ${cd <= 0 ? 'ready' : ''}`}>
@@ -720,6 +789,24 @@ export function App() {
                 expToNext={expToNext}
                 killLog={world?.log ?? []}
                 weaponKind={world?.player.weaponKind ?? DEFAULT_WEAPON_KIND}
+                after={
+                  <>
+                    <ManualPage
+                      manual={world?.manual ?? emptyManualState()}
+                      gold={world?.player.gold ?? 0}
+                      scrollPages={world?.player.scrollPages ?? 0}
+                      weaponKind={world?.player.weaponKind ?? DEFAULT_WEAPON_KIND}
+                      onDraw={doDraw}
+                      lastDraw={lastDraw}
+                    />
+                    <SlotChoice
+                      weaponKind={world?.player.weaponKind ?? DEFAULT_WEAPON_KIND}
+                      learned={world ? allLearnedSkillIds(world.manual) : []}
+                      current={world?.controls.skillPriority[0] ?? null}
+                      onChoose={chooseSlot2}
+                    />
+                  </>
+                }
               />
             )}
           </aside>

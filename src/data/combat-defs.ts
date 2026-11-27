@@ -138,6 +138,16 @@ export const SKILLS: readonly SkillDef[] = [
     slot: 3, unlockLevel: 3, cooldown: 12, power: 0, radius: 0,
     damageType: 'physical', selfEffect: 'dash', description: '瞬间拉开距离，脱离包围。',
   },
+  // ── 剑：秘籍招式（等级不给，只能抽残卷集齐习得）────────────────
+  // 「抽卡不是废纸」的兑现点。它在**玩法轴**上和上面四招不同，不是数值更大：
+  // 劈山/穿云是单体，回风是贴身小圈；这一招是覆盖极大的清扫，
+  // 但倍率低于穿云、冷却长于回风 —— 换的是「清一群」还是「砍死一个」。
+  {
+    id: 'sk_sword_chain', name: '连星贯日', job: 'warrior', weaponKinds: ['sword'],
+    slot: 2, unlockLevel: 0, cooldown: 11, power: 1.5, radius: 5.5,
+    damageType: 'physical',
+    description: '剑光成串贯出，扫过极大范围。倍率不如穿云式，但一次盖住整群小怪。',
+  },
   // 刀
   {
     id: 'sk_blade_basic', name: '断岳斩', job: 'warrior', weaponKinds: ['blade'],
@@ -166,6 +176,14 @@ export const SKILLS: readonly SkillDef[] = [
     damageType: 'physical', selfEffect: 'heal', description: '自动服下回春丹。',
   },
 ];
+
+/**
+ * 只能靠秘籍残卷习得的招式（等级不给，unlockLevel: 0）。
+ *
+ * 定义在这里而不是 manual.ts，是为了让 skills.ts 不用反向依赖 sim 层。
+ * 判定它们「没习得就不可用」的逻辑在 sim/manual.ts。
+ */
+export const MANUAL_SKILL_IDS: ReadonlySet<string> = new Set(['sk_sword_chain']);
 
 export const SKILL_BY_ID: ReadonlyMap<string, SkillDef> = new Map(
   SKILLS.map((s) => [s.id, s]),

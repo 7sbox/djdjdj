@@ -25,12 +25,24 @@ export interface SaveData {
     gold: number;
     ore: number;
     reforgeStones: number;
+    /**
+     * 残页：抽秘籍残卷的唯一消耗。
+     * 旧存档没有这个字段 —— 读档时按 0 处理，**不能判定为损坏**。
+     */
+    scrollPages?: number;
     potions: number;
     /** 由身上的武器决定，读档后按装备重算一次为准 —— 见 weaponKindFromEquipped。 */
     weaponKind: WeaponKind;
   };
   equipped: Record<string, Item>;
   inventory: Item[];
+  /**
+   * 秘籍收藏。旧存档没有这个字段 —— 读档时按空收藏处理。
+   */
+  manual?: {
+    fragments: string[];
+    completed: string[];
+  };
   floorId: string;
   malice: number;
   controls: {
@@ -272,6 +284,28 @@ export function importSave(text: string): SaveData {
     throw new SaveValidationError('存档里的角色数据不完整（武器谱系不对），读不了。');
   }
 
+  // 残页：可以不写（旧档），写了就必须是有效数字
+  if (player.scrollPages !== undefined) {
+    if (typeof player.scrollPages !== 'number' || !Number.isFinite(player.scrollPages) || player.scrollPages < 0) {
+      throw new SaveValidationError('存档里的残页数不对，读不了。');
+    }
+  }
+
+  // 秘籍收藏：可以不写（旧档），写了就必须是两组字符串数组。
+  // 写成 `{}` 这种「有壳没肉」的形状要拒绝 —— 下游会直接展开它，炸在启动那一刻。
+  const manual = data.manual;
+  if (manual !== undefined) {
+    if (!isObject(manual)) {
+      throw new SaveValidationError('存档里的秘籍数据形状不对，读不了。');
+    }
+    for (const key of ['fragments', 'completed'] as const) {
+      const arr = (manual as Record<string, unknown>)[key];
+      if (!Array.isArray(arr) || !arr.every((x) => typeof x === 'string')) {
+        throw new SaveValidationError(`存档里的秘籍收藏不完整（缺 ${key}），读不了。`);
+      }
+    }
+  }
+
   if (typeof data.savedAt !== 'number' || !Number.isFinite(data.savedAt)) {
     throw new SaveValidationError('存档缺少存档时间，读不了。');
   }
@@ -343,11 +377,13 @@ export function newSave(seed: number): SaveData {
       gold: 0,
       ore: 0,
       reforgeStones: 0,
+      scrollPages: 0,
       potions: 5,
       weaponKind: 'sword',
     },
     equipped: {},
     inventory: [],
+    manual: { fragments: [], completed: [] },
     floorId: 'f1',
     malice: 0,
     controls: {

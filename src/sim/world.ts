@@ -1,10 +1,11 @@
 import type { MonsterDef, SkillDef, WeaponKind } from '../types';
-import { floorById, monsterById, skillById } from '../data/combat-defs';
+import { floorById, monsterById } from '../data/combat-defs';
 import type { Rng } from './rng';
 import { clampStats, combineStats, computeDamage, levelStats, mitigation, statsFromEquipment } from './stats';
 import type { Stats } from './stats';
 import { ITEM_DEF_BY_ID } from '../data/items';
-import { basicSkillFor, skillFitsWeapon, skillsForWeapon } from '../data/skills';
+import { basicSkillFor, equippedSkillBar } from '../data/skills';
+import { allLearnedSkillIds, skillUnlockedByManual, type ManualState } from './manual';
 import { randomSlot, rollDrop, rollItem, salvageYield } from './loot';
 import type { Item, SlotId } from '../types';
 
@@ -102,6 +103,8 @@ export interface WorldState {
     gold: number;
     ore: number;
     reforgeStones: number;
+    /** 残页：抽秘籍残卷的唯一消耗。只有精英与 Boss 会掉。 */
+    scrollPages: number;
     /** 技能的冷却剩余（按技能 id）。 */
     cooldowns: Record<string, number>;
     weaponKind: WeaponKind;
@@ -111,6 +114,14 @@ export interface WorldState {
   };
 
   controls: PlayerControls;
+
+  /**
+   * 秘籍收藏：已拥有的残卷、已习得的秘籍。
+   *
+   * 放在世界状态里而不是 player 里，是因为它不是「战斗属性」——
+   * 它决定**哪些招式可用**，这个判定必须在一处说了算（见 castableSkills）。
+   */
+  manual: ManualState;
 
   monsters: Monster[];
   floating: FloatingText[];
@@ -162,6 +173,8 @@ export function createWorld(opts: {
   floorId: string;
   equipped: Partial<Record<SlotId, Item>>;
   malice?: number;
+  /** 秘籍收藏的初值（读档时用）。不传就是空收藏。 */
+  manual?: ManualState;
 }): WorldState {
   const floor = floorById(opts.floorId);
   const level = 1;
@@ -183,6 +196,7 @@ export function createWorld(opts: {
       gold: 0,
       ore: 0,
       reforgeStones: 0,
+      scrollPages: 0,
       cooldowns: {},
       // 武器决定武学：开局那一身装备就决定你现在会什么
       weaponKind: weaponKindFromEquipped(opts.equipped),
@@ -199,6 +213,7 @@ export function createWorld(opts: {
       skillPriority: ['sk_sword_swirl', 'sk_sword_pierce'],
       retreatAt: 0,
     },
+    manual: opts.manual ?? { fragments: [], completed: [] },
     monsters: [],
     floating: [],
     loot: [],
@@ -542,8 +557,20 @@ export function stepWorld(state: WorldState, deps: WorldDeps): void {
     const goldGain = Math.round((3 + def.hp * 0.02) * (1 + stats.goldFind));
     gainExp(state, expGain);
     p.gold += goldGain;
-    if (def.tier === 'boss') p.reforgeStones += rng.int(2, 4);
-    else if (m.elite && rng.chance(0.05)) p.reforgeStones += 1;
+    if (def.tier === 'boss') {
+      p.reforgeStones += rng.int(2, 4);
+      // 残页只有硬仗给：Boss 必掉 2–4 张
+      const pages = rng.int(2, 4);
+      p.scrollPages += pages;
+      float(state, `残页 +${pages}`, 'loot', m.pos);
+    } else if (m.elite) {
+      if (rng.chance(0.05)) p.reforgeStones += 1;
+      // 精英 5% 掉 1 张残页 —— 刷小怪永远刷不出抽卡钱
+      if (rng.chance(0.05)) {
+        p.scrollPages += 1;
+        float(state, '残页 +1', 'loot', m.pos);
+      }
+    }
 
     float(state, `+${goldGain}`, 'heal', m.pos);
   }
@@ -680,24 +707,38 @@ export function pickSkill(state: WorldState, stats: Stats): SkillDef | null {
   return null;
 }
 
-/** 可以自动释放的主动技，按「玩家排的顺序，再接上本武器没排到的」排好。 */
+/**
+ * 可以自动释放的主动技，按「玩家排的顺序，再接上没排到的」排好。
+ *
+ * 关键点：**按槽位装配**，每槽只出一招。这是「二选一」的另一半 ——
+ * 只做渲染层的二选一、这里仍把同槽两招都放出来，玩家就会发现
+ * 穿云式在连星贯日冷却时顶上来，等于白捡一个按钮。
+ *
+ * 过滤链：
+ * 1. equippedSkillBar 决定每槽装配了哪招（含秘籍招是否已习得）。
+ * 2. 只取伤害型主动技（1、2 槽）；位移/保命/普攻不走这条路。
+ */
 function castableSkills(state: WorldState): SkillDef[] {
   const kind = state.player.weaponKind;
+  const bar = equippedSkillBar(
+    kind,
+    allLearnedSkillIds(state.manual),
+    state.controls.skillPriority,
+  ).filter((d) => d.slot === 1 || d.slot === 2);
+
   const out: SkillDef[] = [];
   const seen = new Set<string>();
 
+  // 先按玩家排的优先级，再补上没排到的
   for (const id of state.controls.skillPriority) {
     if (seen.has(id)) continue;
-    const def = skillById(id);
-    if (!skillFitsWeapon(def, kind)) continue;
-    // 只有伤害型主动技走这里；位移与保命由各自开关处理
-    if (def.slot === 0 || def.selfEffect === 'dash' || def.selfEffect === 'shield') continue;
+    const def = bar.find((b) => b.id === id);
+    if (!def) continue;
+    if (!skillUnlockedByManual(def, state.manual)) continue;
     seen.add(id);
     out.push(def);
   }
-
-  for (const def of skillsForWeapon(kind)) {
-    if (def.slot !== 1 && def.slot !== 2) continue;
+  for (const def of bar) {
     if (seen.has(def.id)) continue;
     seen.add(def.id);
     out.push(def);

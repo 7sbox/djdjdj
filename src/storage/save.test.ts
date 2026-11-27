@@ -242,3 +242,51 @@ describe('导入存档：词汇表里写死的边界也要守住', () => {
     expect(catchImport(file).message).toContain('词条');
   });
 });
+
+describe('秘籍收藏与残页进存档', () => {
+  it('新档带着空收藏与零残页', () => {
+    const data = newSave(1);
+    expect(data.manual).toEqual({ fragments: [], completed: [] });
+    expect(data.player.scrollPages).toBe(0);
+  });
+
+  it('收藏能原样导出再导入', () => {
+    const data = validSave();
+    data.manual = { fragments: ['frag_lianxing_1', 'frag_lianxing_2'], completed: [] };
+    data.player.scrollPages = 7;
+
+    const round = importSave(exportSave(data));
+    expect(round.manual).toEqual(data.manual);
+    expect(round.player.scrollPages).toBe(7);
+  });
+
+  /**
+   * 这条是这张票最重要的存档约束：
+   * 更新游戏就丢档，比不能抽卡严重得多。旧存档缺新字段必须能读。
+   */
+  it('旧存档没有 manual 与 scrollPages 时照读，不判损坏', () => {
+    const data = validSave();
+    delete (data as { manual?: unknown }).manual;
+    delete (data as { player: { scrollPages?: number } }).player.scrollPages;
+
+    const round = importSave(exportSave(data));
+    expect(round.player.level).toBe(data.player.level);
+    // 读回来是「没有」，由 App 层按空收藏处理
+    expect(round.manual).toBeUndefined();
+    expect(round.player.scrollPages).toBeUndefined();
+  });
+
+  it('残页是数字就必须是有效数字，写了字符串要拒绝', () => {
+    const file = withField((d) => {
+      (d.player as { scrollPages?: unknown }).scrollPages = '很多';
+    });
+    expect(catchImport(file).message).toContain('残页');
+  });
+
+  it('manual 形状不对要拒绝', () => {
+    const file = withField((d) => {
+      (d as { manual?: unknown }).manual = { fragments: 'not-an-array', completed: [] };
+    });
+    expect(catchImport(file).message).toContain('秘籍');
+  });
+});
