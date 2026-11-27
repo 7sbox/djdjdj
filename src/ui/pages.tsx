@@ -1,4 +1,6 @@
-import type { Item, SlotId } from '../types';
+import type { Item, SlotId, WeaponKind } from '../types';
+import { WEAPON_BY_KIND } from '../data/items';
+import { skillsForWeapon } from '../data/skills';
 import { HoverCard, ItemCard, ItemRow, SlotGrid } from './ItemCard';
 
 export interface BagProps {
@@ -180,11 +182,15 @@ export function CharacterPage(props: {
   exp: number;
   expToNext: number;
   killLog: { t: number; text: string }[];
+  weaponKind: WeaponKind;
 }) {
+  // 武器决定武学：这一页列的就是当前这把武器能用的四招
+  const weaponName = WEAPON_BY_KIND.get(props.weaponKind)?.name ?? '空手';
+
   return (
     <div class="pane">
       <h4>角色</h4>
-      <div class="kv"><span>职业</span><span>战士（剑）</span></div>
+      <div class="kv"><span>职业</span><span>战士（{weaponName}）</span></div>
       <div class="kv"><span>等级</span><span class="num">{props.level}</span></div>
       <div class="kv"><span>经验</span><span class="num">{Math.round(props.exp)} / {props.expToNext}</span></div>
 
@@ -195,11 +201,12 @@ export function CharacterPage(props: {
         ))}
       </div>
 
-      <h4>武学</h4>
+      <h4>武学（{weaponName}）</h4>
       <div class="list">
-        {['劈山式 · 普攻', '回风扫叶 · 5 级', '穿云式 · 10 级', '游身步 · 3 级'].map((n) => (
-          <div class="row" style="cursor:default">
-            <span class="nm">{n}</span>
+        {skillsForWeapon(props.weaponKind).map((sk) => (
+          <div key={sk.id} class="row" style="cursor:default">
+            <span class="nm">{sk.name}</span>
+            <span class="tag">{sk.slot === 0 ? '普攻' : `${sk.unlockLevel} 级`}</span>
           </div>
         ))}
       </div>

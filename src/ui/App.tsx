@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Item, SlotId } from '../types';
-import { FLOORS, floorById, skillById } from '../data/combat-defs';
+import { FLOORS, floorById } from '../data/combat-defs';
+import { skillsForWeapon } from '../data/skills';
 import { ITEM_DEFS, RARITY_NAMES } from '../data/items';
 import { createRng, type Rng } from '../sim/rng';
 import { rollItem } from '../sim/loot';
 import {
   DEFAULT_KILL_RATE,
+  DEFAULT_WEAPON_KIND,
   TICK_SECONDS,
   changeFloor,
   computeOfflineReward,
@@ -13,7 +15,9 @@ import {
   playerStats,
   reenterFloor,
   resumeFarming,
+  setWeaponKind,
   stepWorld,
+  weaponKindFromEquipped,
   type WorldState,
 } from '../sim/world';
 import {
@@ -23,7 +27,16 @@ import {
   upgradeCost,
   upgradeItem,
 } from '../sim/equip-ops';
-import { loadGame, newSave, saveGame, type SaveData } from '../storage/save';
+import {
+  exportSave,
+  importAndReplace,
+  importSave,
+  loadGame,
+  newSave,
+  saveFileName,
+  saveGame,
+  type SaveData,
+} from '../storage/save';
 import { SceneView } from '../render/scene';
 import { CSS } from './styles';
 import { BagPage, CharacterPage, SmithPage } from './pages';
@@ -49,6 +62,8 @@ export function App() {
   const [hover, setHover] = useState<{ item: Item | null; x: number; y: number } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [offlineNote, setOfflineNote] = useState<string | null>(null);
+  const [saveNotice, setSaveNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const [, forceTick] = useState(0);
 
   // 与渲染无关、变化极快的状态放 ref，避免每帧 setState
@@ -105,7 +120,8 @@ export function App() {
         world.player.ore = saved.player.ore;
         world.player.reforgeStones = saved.player.reforgeStones;
         world.player.potions = saved.player.potions;
-        world.player.weaponKind = saved.player.weaponKind;
+        // 武器种类以身上那把为准：存档里的字段只为兼容旧档，装备变了就跟着变
+        world.player.weaponKind = weaponKindFromEquipped(gear);
         world.controls = {
           ...world.controls,
           ...saved.controls,
@@ -185,10 +201,11 @@ export function App() {
     return () => clearInterval(id);
   }, []);
 
-  const persist = useCallback(async () => {
+  /** 把此刻的世界状态拍成一份存档。自动存档、手动存档、导出共用同一份。 */
+  const currentSave = useCallback((): SaveData | null => {
     const world = worldRef.current;
-    if (!world) return;
-    const data: SaveData = {
+    if (!world) return null;
+    return {
       ...newSave(seedRef.current),
       savedAt: Date.now(),
       seed: seedRef.current,
@@ -209,8 +226,94 @@ export function App() {
       controls: world.controls,
       lastSeen: Date.now(),
     };
-    await saveGame(data);
   }, []);
+
+  const persist = useCallback(async () => {
+    const data = currentSave();
+    if (!data) return;
+    await saveGame(data);
+  }, [currentSave]);
+
+  // ── 手动导出 / 导入 ─────────────────────────────────────
+  const doExport = () => {
+    const data = currentSave();
+    if (!data) {
+      setSaveNotice({ kind: 'err', text: '世界还没读好，稍等一下再导出。' });
+      return;
+    }
+    const name = saveFileName();
+    const blob = new Blob([exportSave(data)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    // 立刻 revoke 会在部分浏览器里把还没开始的下载掐掉，推到下一轮事件循环
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    setSaveNotice({
+      kind: 'ok',
+      text: `已导出 ${name}。这份文件收好 —— 存档丢了，它是唯一的解药。`,
+    });
+  };
+
+  /**
+   * 导入存档。校验不过就原样停在原地：一个字都不写盘，
+   * 现有存档（连 .bak）也不碰。
+   */
+  const doImport = async (file: File) => {
+    // 文件只读一次：校验和最终落盘用的是同一份文本，中间被人改掉也不会漏过去
+    const text = await file.text();
+
+    let data: SaveData;
+    try {
+      data = importSave(text);
+    } catch (err) {
+      setSaveNotice({
+        kind: 'err',
+        text: `导入失败：${(err as Error).message} 当前存档没有被改动。`,
+      });
+      return;
+    }
+
+    let floorName: string;
+    try {
+      floorName = floorById(data.floorId).name;
+    } catch {
+      floorName = data.floorId;
+    }
+    const savedAt = new Date(data.savedAt).toLocaleString();
+    const ok = window.confirm(
+      `确认导入这份存档？\n\n` +
+        `等级 ${data.player.level}、金币 ${data.player.gold}、背包 ${data.inventory.length} 件\n` +
+        `${floorName}，煞气 ${data.malice}，存档时间 ${savedAt}\n\n` +
+        `导入会覆盖当前存档并立即重载。当前存档会先备份到 .bak。`,
+    );
+    if (!ok) {
+      setSaveNotice({ kind: 'ok', text: '已取消导入，当前存档没动。' });
+      return;
+    }
+
+    try {
+      // 走 importAndReplace 而不是直接 saveGame：校验与写盘是同一条路，
+      // 坏档在写盘之前就被拦下，现有存档连 .bak 都不会被覆盖。
+      await importAndReplace(text);
+    } catch (err) {
+      setSaveNotice({
+        kind: 'err',
+        text: `写入失败：${(err as Error).message} 当前存档没有被改动。`,
+      });
+      return;
+    }
+    location.reload();
+  };
+
+  const onImportPicked = (input: HTMLInputElement) => {
+    const file = input.files?.[0];
+    // 清掉 value，玩家才能连着选同一个文件
+    input.value = '';
+    if (!file) return;
+    void doImport(file);
+  };
 
   // 自动存档（5 分钟）
   useEffect(() => {
@@ -237,8 +340,8 @@ export function App() {
       const s = playerStats(world, next);
       world.player.maxHp = s.hp;
       world.player.hp = Math.min(world.player.hp, s.hp);
-      if (item.defId.includes('blade')) world.player.weaponKind = 'blade';
-      else if (item.defId.includes('sword')) world.player.weaponKind = 'sword';
+      // 武器决定武学：技能栏跟着换，冷却表跟着重置
+      setWeaponKind(world, weaponKindFromEquipped(next));
     }
     setMessage(`已装备 ${itemName(item)}`);
   };
@@ -373,7 +476,27 @@ export function App() {
           <button class="btn" onClick={() => void persist().then(() => setMessage('已存档。'))}>
             存档
           </button>
+          <button class="btn" onClick={doExport}>
+            导出存档
+          </button>
+          <button class="btn" onClick={() => importInputRef.current?.click()}>
+            导入存档
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".json,application/json"
+            style="display:none"
+            onChange={(e) => onImportPicked(e.currentTarget)}
+          />
         </div>
+
+        {saveNotice && (
+          <div class={`notice ${saveNotice.kind}`}>
+            <span class="text">{saveNotice.text}</span>
+            <span class="close" onClick={() => setSaveNotice(null)}>知道了</span>
+          </div>
+        )}
 
         <div class="body">
           <div class="viewport" ref={viewportRef}>
@@ -388,11 +511,10 @@ export function App() {
                 <i style={`width:${(expRatio * 100).toFixed(1)}%`} />
               </div>
               <div class="skills">
-                {['sk_sword_basic', 'sk_sword_swirl', 'sk_sword_pierce', 'sk_sword_step'].map((id) => {
-                  const def = skillById(id);
-                  const cd = world?.player.cooldowns[id] ?? 0;
+                {skillsForWeapon(world?.player.weaponKind ?? DEFAULT_WEAPON_KIND).map((def) => {
+                  const cd = world?.player.cooldowns[def.id] ?? 0;
                   return (
-                    <div class={`slot ${cd <= 0 ? 'ready' : ''}`}>
+                    <div key={def.id} class={`slot ${cd <= 0 ? 'ready' : ''}`}>
                       {def.name.slice(0, 2)}
                       {cd > 0 ? <div class="cd num">{cd.toFixed(1)}</div> : null}
                     </div>
@@ -558,6 +680,7 @@ export function App() {
                 exp={world?.player.exp ?? 0}
                 expToNext={expToNext}
                 killLog={world?.log ?? []}
+                weaponKind={world?.player.weaponKind ?? DEFAULT_WEAPON_KIND}
               />
             )}
           </aside>
@@ -569,3 +692,4 @@ export function App() {
 
 void ITEM_DEFS;
 void RARITY_NAMES;
+

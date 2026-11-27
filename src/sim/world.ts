@@ -1,8 +1,9 @@
-import type { MonsterDef, SkillDef } from '../types';
+import type { MonsterDef, SkillDef, WeaponKind } from '../types';
 import { floorById, monsterById, skillById } from '../data/combat-defs';
 import type { Rng } from './rng';
 import { clampStats, combineStats, computeDamage, levelStats, mitigation, statsFromEquipment } from './stats';
 import type { Stats } from './stats';
+import { ITEM_DEF_BY_ID } from '../data/items';
 import { randomSlot, rollDrop, rollItem } from './loot';
 import type { Item, SlotId } from '../types';
 
@@ -86,7 +87,7 @@ export interface WorldState {
     reforgeStones: number;
     /** 技能的冷却剩余（按技能 id）。 */
     cooldowns: Record<string, number>;
-    weaponKind: 'sword' | 'blade';
+    weaponKind: WeaponKind;
     attackCd: number;
     alive: boolean;
     respawnIn: number;
@@ -166,7 +167,8 @@ export function createWorld(opts: {
       ore: 0,
       reforgeStones: 0,
       cooldowns: {},
-      weaponKind: 'sword',
+      // 武器决定武学：开局那一身装备就决定你现在会什么
+      weaponKind: weaponKindFromEquipped(opts.equipped),
       attackCd: 0,
       alive: true,
       respawnIn: 0,
@@ -174,7 +176,8 @@ export function createWorld(opts: {
     controls: {
       autoPotion: true,
       autoSkills: true,
-      skillPriority: ['sk_sword_swirl', 'sk_sword_pierce', 'sk_sword_step'],
+      // 优先级表按槽位排，跨武器留着；真正的武器过滤在 pickSkill 里做
+      skillPriority: ['sk_sword_swirl', 'sk_sword_pierce', 'sk_blade_cleave', 'sk_blade_sunder', 'sk_sword_step', 'sk_blade_guard'],
       retreatAt: 0,
     },
     monsters: [],
@@ -494,6 +497,33 @@ export function stepWorld(state: WorldState, deps: WorldDeps): void {
   tickTimers(state);
 }
 
+/** 空手时的起手武学。新档、脱掉武器都落在这里。 */
+export const DEFAULT_WEAPON_KIND: WeaponKind = 'sword';
+
+/**
+ * 从身上的装备读出武器种类。武器决定武学，所以这是唯一的真相来源 ——
+ * 不要另立一个「玩家当前武器」的字段去跟装备抢话。
+ */
+export function weaponKindFromEquipped(
+  equipped: Partial<Record<SlotId, Item>>,
+): WeaponKind {
+  const weapon = equipped.weapon;
+  if (!weapon) return DEFAULT_WEAPON_KIND;
+  const def = ITEM_DEF_BY_ID.get(weapon.defId);
+  return def?.weaponKind ?? DEFAULT_WEAPON_KIND;
+}
+
+/**
+ * 换武器。武学跟着走，所以冷却表也得跟着重置 ——
+ * 不清的话，刀招会带着上个武器留下的冷却，换装那一刻像是「白换了」。
+ * 换的是同一把武器就不动冷却，免得来回点同一件装备刷 CD。
+ */
+export function setWeaponKind(state: WorldState, kind: WeaponKind): void {
+  if (state.player.weaponKind === kind) return;
+  state.player.weaponKind = kind;
+  state.player.cooldowns = {};
+}
+
 /** 升到下一级所需经验。 */
 export function expToNext(level: number): number {
   return Math.round(60 * Math.pow(level, 1.55));
@@ -556,18 +586,29 @@ function tickTimers(state: WorldState): void {
   if (state.fortuneTicks > 0) state.fortuneTicks--;
 }
 
-/** 按优先级挑一个可用的主动技。冲突时先放优先级靠前的。 */
-function pickSkill(state: WorldState, stats: Stats): SkillDef | null {
+/**
+ * 按优先级挑一个可用的主动技。冲突时先放优先级靠前的。
+ *
+ * 优先级表是玩家排的、可以跨武器留着，所以这里还要再按当前武器筛一遍：
+ * 拿刀的人不该放出剑招。weaponKinds 为空的技能（如服丹）任何武器都能用。
+ */
+export function pickSkill(state: WorldState, stats: Stats): SkillDef | null {
   if (!state.controls.autoSkills) return null;
   for (const id of state.controls.skillPriority) {
     if ((state.player.cooldowns[id] ?? 0) > 0) continue;
     const def = skillById(id);
+    if (!skillFitsWeapon(def, state.player.weaponKind)) continue;
     // 只有伤害型主动技走这里；位移与保命由各自开关处理
     if (def.slot === 0 || def.selfEffect === 'dash' || def.selfEffect === 'shield') continue;
     state.player.cooldowns[id] = def.cooldown * (1 - stats.cooldownReduce);
     return def;
   }
   return null;
+}
+
+/** 这个技能能不能被当前武器使用。空 weaponKinds 表示通用。 */
+function skillFitsWeapon(def: SkillDef, kind: WeaponKind): boolean {
+  return def.weaponKinds.length === 0 || def.weaponKinds.includes(kind);
 }
 
 function applyElement(
