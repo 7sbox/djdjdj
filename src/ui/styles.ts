@@ -61,6 +61,16 @@ body {
   text-align: center; font-size: 10px; color: #ccc;
 }
 
+/* 技能栏：带冷却 + 优先级顺位；主动技可拖，普攻与位移保命拖不动 */
+.slot.moveable { cursor: grab; user-select: none; }
+.slot.moveable:hover { border-color: var(--gold); color: var(--ink); }
+.slot.dragging { opacity: .35; cursor: grabbing; }
+.slot.drop { border-color: var(--gold); background: #20262e; }
+.slot .rank {
+  position: absolute; top: 0; left: 0; padding: 0 3px;
+  font-size: 9px; color: var(--gold); line-height: 12px;
+}
+
 .toggles { display: flex; gap: 8px; margin-top: 8px; pointer-events: auto; flex-wrap: wrap; }
 .tg {
   display: flex; align-items: center; gap: 5px; padding: 3px 8px;

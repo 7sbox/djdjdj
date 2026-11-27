@@ -26,6 +26,19 @@ export function skillFitsWeapon(def: SkillDef, kind: WeaponKind): boolean {
   return def.weaponKinds.length === 0 || def.weaponKinds.includes(kind);
 }
 
+/**
+ * 占不占「可以排优先级」的那两个槽：1、2 号槽。三个问题一处说了算：
+ *
+ * - 普攻（0 号槽）自动放，不参与排序；
+ * - 位移/保命（3 号槽，如游身步、卸甲势）有自己的开关，也不参与。
+ *
+ * 挑招（world.pickSkill）与拖拽（sim.skill-order）都必须走这一个判定，
+ * 否则「拖得动、却永远轮不到」或者反过来，两边就会分叉。
+ */
+export function isPrioritySlot(def: SkillDef): boolean {
+  return def.slot === 1 || def.slot === 2;
+}
+
 /** 当前武器的普攻。武器决定武学，普攻的倍率也一样跟着换。 */
 export function basicSkillFor(kind: WeaponKind): SkillDef | undefined {
   return skillsForWeapon(kind).find((s) => s.slot === 0);

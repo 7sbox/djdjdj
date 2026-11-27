@@ -31,6 +31,8 @@ import { loadGame, newSave, saveGame, type SaveData } from '../storage/save';
 import { SceneView } from '../render/scene';
 import { CSS } from './styles';
 import { BagPage, CharacterPage, SmithPage } from './pages';
+import { SkillBar } from './SkillBar';
+import { reorderForWeapon } from '../sim/skill-order';
 import { itemName, statSummary } from './format';
 
 const EXP_TABLE = (level: number) => Math.round(40 * Math.pow(level, 1.6));
@@ -350,6 +352,7 @@ export function App() {
   };
 
   const world = worldRef.current;
+  const weaponKind = world?.player.weaponKind ?? DEFAULT_WEAPON_KIND;
   const stats = world ? playerStats(world, equipped) : null;
   const summary = stats ? statSummary(stats) : [];
 
@@ -392,17 +395,23 @@ export function App() {
               <div class="bar exp" style="margin-top:4px">
                 <i style={`width:${(expRatio * 100).toFixed(1)}%`} />
               </div>
-              <div class="skills">
-                {skillsForWeapon(world?.player.weaponKind ?? DEFAULT_WEAPON_KIND).map((def) => {
-                  const cd = world?.player.cooldowns[def.id] ?? 0;
-                  return (
-                    <div key={def.id} class={`slot ${cd <= 0 ? 'ready' : ''}`}>
-                      {def.name.slice(0, 2)}
-                      {cd > 0 ? <div class="cd num">{cd.toFixed(1)}</div> : null}
-                    </div>
+              <SkillBar
+                skills={skillsForWeapon(weaponKind)}
+                cooldowns={world?.player.cooldowns ?? {}}
+                priority={world?.controls.skillPriority ?? []}
+                weaponKind={weaponKind}
+                onReorder={(fromId, toId) => {
+                  const w = worldRef.current;
+                  if (!w) return;
+                  w.controls.skillPriority = reorderForWeapon(
+                    w.controls.skillPriority,
+                    w.player.weaponKind,
+                    fromId,
+                    toId,
                   );
-                })}
-              </div>
+                  forceTick((t) => t + 1);
+                }}
+              />
               <div class="toggles">
                 <div
                   class={`tg ${world?.controls.autoPotion ? 'on' : ''}`}
