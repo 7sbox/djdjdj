@@ -109,7 +109,7 @@ export function App() {
         world.player.ore = saved.player.ore;
         world.player.reforgeStones = saved.player.reforgeStones;
         world.player.potions = saved.player.potions;
-        // 武器种类以身上那把为准：存档里的字段只为兼容旧档，装备变了就跟着变
+        // 武器谱系以身上那把为准：存档里的字段只为兼容旧档，装备变了就跟着变
         world.player.weaponKind = weaponKindFromEquipped(gear);
         world.controls = {
           ...world.controls,

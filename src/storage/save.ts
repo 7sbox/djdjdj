@@ -24,6 +24,7 @@ export interface SaveData {
     reforgeStones: number;
     potions: number;
     /** 由身上的武器决定，读档后重算一次为准 —— 见 weaponKindFromEquipped。 */
+    /** 由身上的武器决定，读档后按装备重算一次为准 —— 见 weaponKindFromEquipped。 */
     weaponKind: WeaponKind;
   };
   equipped: Record<string, Item>;

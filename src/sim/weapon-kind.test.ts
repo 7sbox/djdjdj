@@ -8,7 +8,7 @@ const gear = (kind: 'sword' | 'blade' | 'spear'): Partial<Record<SlotId, Item>> 
   weapon: rollItem({ slot: 'weapon', itemLevel: 5, rarity: 'green', weaponKind: kind }, createRng(3)),
 });
 
-describe('武器种类以身上那把武器为准', () => {
+describe('武器谱系以身上那把武器为准', () => {
   it('武器槽里的刀 → blade', () => {
     expect(weaponKindFromEquipped(gear('blade'))).toBe('blade');
   });
