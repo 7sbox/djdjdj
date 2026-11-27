@@ -10,18 +10,22 @@ export const MONSTERS: readonly MonsterDef[] = [
     id: 'm_dog', name: '野狗', tier: 'normal',
     attackForm: 'melee', damageType: 'physical',
     hp: 90, damage: 9, speed: 0.055, range: 1.6, attackInterval: 1.2,
+    armor: 12,
     aggroRange: 9, weight: 30,
   },
   {
     id: 'm_golem', name: '石傀', tier: 'normal',
     attackForm: 'melee', damageType: 'physical',
     hp: 260, damage: 18, speed: 0.022, range: 1.8, attackInterval: 2.0,
+    // 石头做的，甲比旧公式（10 + 260×0.02 = 15.2）厚 —— 甲是独立旋钮，不是从血量算出来的
+    armor: 20,
     aggroRange: 7, weight: 18,
   },
   {
     id: 'm_gu', name: '蛊虫', tier: 'normal',
     attackForm: 'melee', damageType: 'magic',
     hp: 70, damage: 7, speed: 0.048, range: 1.4, attackInterval: 1.0,
+    armor: 11,
     aggroRange: 8, weight: 26,
   },
   // ── 远程 3 种 ────────────────────────────────────────────
@@ -29,31 +33,42 @@ export const MONSTERS: readonly MonsterDef[] = [
     id: 'm_archer', name: '山贼弓手', tier: 'normal',
     attackForm: 'ranged', damageType: 'physical',
     hp: 110, damage: 12, speed: 0.03, range: 8, attackInterval: 1.6,
+    armor: 6,
     aggroRange: 11, weight: 16,
   },
   {
     id: 'm_warlock', name: '邪术士', tier: 'normal',
     attackForm: 'ranged', damageType: 'magic',
     hp: 80, damage: 22, speed: 0.018, range: 7, attackInterval: 2.8,
+    armor: 6,
     aggroRange: 10, weight: 12,
   },
   {
     id: 'm_firei', name: '火魈', tier: 'normal',
     attackForm: 'ranged', damageType: 'magic',
     hp: 130, damage: 15, speed: 0.028, range: 6, attackInterval: 2.0,
+    armor: 6,
     aggroRange: 10, weight: 14,
   },
   // ── Boss 2 种 ────────────────────────────────────────────
+  // 定档依据见 src/sim/boss-balance.test.ts（30 个种子实测）：
+  // 裸装 1 级 0/30 且死前只啃掉 Boss 不到一半血；3 件绿装 14/30、末血中位 9%；
+  // 4 件绿装 30/30、末血 9–75%、中位 57%、中位 156 秒打完。
+  // 想调它，先让那几条用例继续成立。
   {
     id: 'm_boss_earth', name: '守碑石将', tier: 'boss',
     attackForm: 'melee', damageType: 'physical',
-    hp: 8000, damage: 55, speed: 0.026, range: 3.2, attackInterval: 2.2,
+    hp: 4600, damage: 68, speed: 0.026, range: 3.2, attackInterval: 2.2,
+    armor: 25,
     aggroRange: 12, weight: 0,
   },
   {
+    // 第二层 K=120，护甲要按那一层的 K 配，不能沿用第一层的数字。
+    // 旧公式给它是 5 + 7200*0.01 = 77，这里按同一减伤量级还原。
     id: 'm_boss_serpent', name: '幽窟蛇母', tier: 'boss',
     attackForm: 'ranged', damageType: 'magic',
     hp: 7200, damage: 48, speed: 0.03, range: 7.5, attackInterval: 1.9,
+    armor: 77,
     aggroRange: 12, weight: 0,
   },
 ];
@@ -161,3 +176,4 @@ export function skillById(id: string): SkillDef {
   if (!s) throw new Error(`未知技能: ${id}`);
   return s;
 }
+
