@@ -4,6 +4,7 @@ import { SLOT_NAMES, WEAPONS } from '../data/items';
 import type { Rarity, SlotId } from '../types';
 import { rollItem } from '../sim/loot';
 import type { Rng } from '../sim/rng';
+import { STARTING_GOLD, STARTING_POTIONS } from '../sim/world';
 
 /** 存档版本。改数据结构时递增，读档时做迁移。 */
 export const SAVE_VERSION = 1;
@@ -374,11 +375,12 @@ export function newSave(seed: number): SaveData {
       level: 1,
       exp: 0,
       hp: 100,
-      gold: 0,
+      // 开局供给必须与世界初值同源，否则「新建档」与「新开世界」两套开端会对不上
+      gold: STARTING_GOLD,
       ore: 0,
       reforgeStones: 0,
       scrollPages: 0,
-      potions: 5,
+      potions: STARTING_POTIONS,
       weaponKind: 'sword',
     },
     equipped: {},
