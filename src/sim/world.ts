@@ -4,7 +4,7 @@ import type { Rng } from './rng';
 import { clampStats, combineStats, computeDamage, levelStats, mitigation, statsFromEquipment } from './stats';
 import type { Stats } from './stats';
 import { ITEM_DEF_BY_ID } from '../data/items';
-import { basicSkillFor, skillFitsWeapon, skillsForWeapon } from '../data/skills';
+import { basicSkillFor, isPrioritySlot, skillFitsWeapon, skillsForWeapon } from '../data/skills';
 import { randomSlot, rollDrop, rollItem } from './loot';
 import type { Item, SlotId } from '../types';
 
@@ -620,13 +620,13 @@ function castableSkills(state: WorldState): SkillDef[] {
     const def = skillById(id);
     if (!skillFitsWeapon(def, kind)) continue;
     // 只有伤害型主动技走这里；位移与保命由各自开关处理
-    if (def.slot === 0 || def.selfEffect === 'dash' || def.selfEffect === 'shield') continue;
+    if (!isPrioritySlot(def)) continue;
     seen.add(id);
     out.push(def);
   }
 
   for (const def of skillsForWeapon(kind)) {
-    if (def.slot !== 1 && def.slot !== 2) continue;
+    if (!isPrioritySlot(def)) continue;
     if (seen.has(def.id)) continue;
     seen.add(def.id);
     out.push(def);
