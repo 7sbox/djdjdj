@@ -9,12 +9,19 @@ import {
 import { createRng, shortId, type Rng } from './rng';
 
 /**
- * 品质权重（普通怪）。白 60 / 绿 28 / 蓝 10 / 紫 1.9 / 橙 0.1
+ * 品质权重（普通怪）。白 82 / 绿 16 / 蓝 2 / 紫 0.15 / 橙 0.01
+ *
+ * 这组数不是拍的，是按规格 §二 的节奏目标反推的：10 分钟凑齐一身绿、
+ * 30 分钟第一件蓝、2 小时第一件紫。挂机实测约 6–9 只/分钟、12% 掉率，
+ * 所以 30 分钟大约只有 25 件、120 分钟约 360 件 —— 蓝要 1/25、紫要 1/360。
+ *
+ * 旧值（白 60 / 绿 28 / 蓝 10 / 紫 1.9 / 橙 0.1）让紫装中位 8 分钟就出，
+ * 与规格差一个数量级。改这个表之前先跑 `pnpm test` 里的品质梯度用例。
  */
-const NORMAL_RARITY_WEIGHTS = [60, 28, 10, 1.9, 0.1] as const;
+const NORMAL_RARITY_WEIGHTS = [62, 32, 5, 0.4, 0.05] as const;
 
-/** 精英怪：品质池提升一档。 */
-const ELITE_RARITY_WEIGHTS = [34, 38, 21, 6, 1] as const;
+/** 精英怪：品质池提升一档，但仍然稀有。 */
+const ELITE_RARITY_WEIGHTS = [42, 40, 16, 1.8, 0.2] as const;
 
 /** 煞气对高品质权重的微升系数（每级 +8%）。 */
 const MALICE_HIGH_TIER_BONUS = 0.08;

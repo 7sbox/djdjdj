@@ -109,6 +109,7 @@ export function App() {
         world.controls = {
           ...world.controls,
           ...saved.controls,
+          autoSalvageCommon: saved.controls.autoSalvageCommon ?? false,
           retreatAt: saved.controls.retreatAt ?? 0,
         };
         const s = playerStats(world, gear);
@@ -421,6 +422,17 @@ export function App() {
                   }}
                 >
                   自动武学
+                </div>
+                <div
+                  class={`tg ${world?.controls.autoSalvageCommon ? 'on' : ''}`}
+                  onClick={() => {
+                    const w = worldRef.current;
+                    if (!w) return;
+                    w.controls.autoSalvageCommon = !w.controls.autoSalvageCommon;
+                    forceTick((t) => t + 1);
+                  }}
+                >
+                  自动拆凡品
                 </div>
                 {world?.interrupted ? (
                   <div

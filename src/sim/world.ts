@@ -3,7 +3,7 @@ import { floorById, monsterById, skillById } from '../data/combat-defs';
 import type { Rng } from './rng';
 import { clampStats, combineStats, computeDamage, levelStats, mitigation, statsFromEquipment } from './stats';
 import type { Stats } from './stats';
-import { randomSlot, rollDrop, rollItem } from './loot';
+import { randomSlot, rollDrop, rollItem, salvageYield } from './loot';
 import type { Item, SlotId } from '../types';
 
 /** 固定逻辑帧：0.2 秒。渲染层插值，逻辑层不受帧率影响。 */
@@ -59,6 +59,13 @@ export interface PlayerControls {
   autoPotion: boolean;
   /** 自动释放主动技。关掉只普攻。 */
   autoSkills: boolean;
+  /**
+   * 自动拆解凡品：掉落时凡品直接变成强化矿，不进背包。
+   *
+   * 不开它，背包 80 格而 10 分钟只掉 20 来件，玩家永远等不到「满了」，
+   * 拆解这条出口在头十分钟里形同不存在。
+   */
+  autoSalvageCommon: boolean;
   /** 主动技优先级顺序（技能 id）。冲突时先放前面的。 */
   skillPriority: string[];
   /** 撤退线：血量低于此比率自动往回走。0 表示不撤退。 */
@@ -174,6 +181,7 @@ export function createWorld(opts: {
     controls: {
       autoPotion: true,
       autoSkills: true,
+      autoSalvageCommon: false,
       skillPriority: ['sk_sword_swirl', 'sk_sword_pierce', 'sk_sword_step'],
       retreatAt: 0,
     },
@@ -203,6 +211,41 @@ export function playerStats(state: WorldState, equipped: Partial<Record<SlotId, 
   return clampStats(combineStats(fromLevel, fromGear));
 }
 
+/** 刷怪半径：以玩家为圆心，在这个环带里出现。 */
+const SPAWN_RADIUS_MIN = 9;
+const SPAWN_RADIUS_MAX = 14;
+
+/** 生成点离玩家最多这么远，保证每只怪都进得了仇恨圈。 */
+const SPAWN_MAX_PLAYER_DISTANCE = SPAWN_RADIUS_MAX - 1;
+
+/**
+ * 生成一个「一定够得着玩家」的坐标。
+ *
+ * 以前是绕房间原点撒点，而这个房间的中心并不是玩家的位置 —— 于是背对玩家的那一侧
+ * 会刷出离玩家 15–20 米、却只有 7–11 米仇恨圈的怪。它永远不追、永远不死，
+ * 房间清不空，自动跑图当场死锁。
+ *
+ * 这里以玩家为圆心撒点，并保证落点到玩家的距离不超过仇恨范围：
+ * 怪可以慢，但必须走得过来。
+ */
+function spawnPos(
+  rng: Rng,
+  playerPos: Vec2,
+  aggroRange: number,
+): Vec2 {
+  const maxDist = Math.min(
+    SPAWN_MAX_PLAYER_DISTANCE,
+    Math.max(SPAWN_RADIUS_MIN, aggroRange - 1),
+  );
+  const minDist = Math.min(SPAWN_RADIUS_MIN, maxDist);
+  const angle = rng.next() * Math.PI * 2;
+  const radius = minDist + rng.next() * (maxDist - minDist);
+  return {
+    x: playerPos.x + Math.cos(angle) * radius,
+    z: playerPos.z + Math.sin(angle) * radius,
+  };
+}
+
 /** 从怪物池里抽一只。精英概率 12%。 */
 function spawnMonsters(
   defIds: readonly string[],
@@ -211,6 +254,7 @@ function spawnMonsters(
   malice: number,
   rng: Rng,
   eliteChance: number,
+  playerPos: Vec2,
 ): Monster[] {
   const out: Monster[] = [];
   const levelScale = 1 + malice * 0.1;
@@ -218,17 +262,13 @@ function spawnMonsters(
     const def = monsterById(rng.pick(defIds));
     const elite = def.tier === 'normal' && rng.chance(eliteChance);
     const hpScale = levelScale * (elite ? 3 : 1);
-    const angle = rng.next() * Math.PI * 2;
-    const radius = 9 + rng.next() * 5;
+    const hp = Math.round(def.hp * hpScale * (1 + floorItemLevel * 0.08));
     out.push({
       uid: uid(),
       defId: def.id,
-      hp: Math.round(def.hp * hpScale * (1 + floorItemLevel * 0.08)),
-      maxHp: Math.round(def.hp * hpScale * (1 + floorItemLevel * 0.08)),
-      pos: {
-        x: Math.cos(angle) * radius,
-        z: Math.sin(angle) * radius,
-      },
+      hp,
+      maxHp: hp,
+      pos: spawnPos(rng, playerPos, def.aggroRange),
       state: 0,
       attackCd: 0,
       dots: [],
@@ -259,14 +299,14 @@ export function spawnRoom(
         defId: boss.id,
         hp: Math.round(boss.hp * bossLevel),
         maxHp: Math.round(boss.hp * bossLevel),
-        pos: { x: 0, z: -6 },
+        pos: spawnPos(rng, state.player.pos, boss.aggroRange),
         state: 0,
         attackCd: 0,
         dots: [],
         slow: 0,
         elite: false,
       },
-      ...spawnMonsters(floor.monsterIds, 4, floor.itemLevel, malice, rng, 0.05),
+      ...spawnMonsters(floor.monsterIds, 4, floor.itemLevel, malice, rng, 0.05, state.player.pos),
     ];
   } else {
     const count = Math.min(14, 6 + roomIndex * 3 + malice);
@@ -277,6 +317,7 @@ export function spawnRoom(
       malice,
       rng,
       0.12,
+      state.player.pos,
     );
   }
 
@@ -451,6 +492,13 @@ export function stepWorld(state: WorldState, deps: WorldDeps): void {
           },
           rng,
         );
+        // 自动拆解凡品：直接变矿，不占背包，也不占玩家的注意力
+        if (state.controls.autoSalvageCommon && rarity === 'common') {
+          const yield_ = salvageYield(rarity);
+          state.player.ore += yield_;
+          float(state, `矿+${yield_}`, 'loot', m.pos);
+          continue;
+        }
         deps.onLoot(item);
         state.loot.push({ uid: uid(), item, pos: { ...m.pos }, life: 3 });
         float(state, rarityLabel(rarity), 'loot', m.pos);

@@ -32,6 +32,8 @@ export interface SaveData {
   controls: {
     autoPotion: boolean;
     autoSkills: boolean;
+    /** 自动拆解凡品。旧存档里没有这个字段，读档时按 false 处理。 */
+    autoSalvageCommon?: boolean;
     skillPriority: string[];
     retreatAt: number;
   };
