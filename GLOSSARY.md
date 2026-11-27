@@ -66,6 +66,9 @@ $$伤害 = 攻击力 \times 技能倍率 \times \frac{K}{K+护甲} \times 暴击
 **护甲常数 $K$**
 减伤公式里的基准值，随层数上升（50 / 120 / 200）。
 
+**怪物护甲**（monster armor）
+怪物定义上的独立字段，**不由血量推算**。血量管「能扛多久」，护甲管「多难打死」，两个旋钮分开拧。见 [ADR-0007](docs/adr/0007-monster-armor-is-authored-not-derived.md)。
+
 ## 职业与武学
 
 **武器谱系**（weapon kind）

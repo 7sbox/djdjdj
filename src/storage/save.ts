@@ -1,4 +1,7 @@
 import type { Item, WeaponKind } from '../types';
+import { FLOOR_BY_ID } from '../data/combat-defs';
+import { SLOT_NAMES, WEAPONS } from '../data/items';
+import type { Rarity, SlotId } from '../types';
 import { rollItem } from '../sim/loot';
 import type { Rng } from '../sim/rng';
 
@@ -23,7 +26,6 @@ export interface SaveData {
     ore: number;
     reforgeStones: number;
     potions: number;
-    /** 由身上的武器决定，读档后重算一次为准 —— 见 weaponKindFromEquipped。 */
     /** 由身上的武器决定，读档后按装备重算一次为准 —— 见 weaponKindFromEquipped。 */
     weaponKind: WeaponKind;
   };
@@ -95,29 +97,216 @@ export async function clearGame(): Promise<void> {
   await tx('readwrite', (s) => s.delete(BACKUP_KEY));
 }
 
-/** 手动导出：一个能存进文本文件的 JSON 字符串。 */
-export function exportSave(data: SaveData): string {
-  return JSON.stringify(data, null, 2);
+/** 导出文件的格式标记。导入时靠它分辨「这是不是《地宫》的存档」。 */
+export const SAVE_FORMAT = 'djdjdj-save';
+
+/** 导出文件的外壳：格式标记 + 版本号 + 存档本体。 */
+export interface SaveEnvelope {
+  format: typeof SAVE_FORMAT;
+  version: number;
+  savedAt: number;
+  data: SaveData;
 }
 
-/** 手动导入：校验版本和基本形状，坏的直接拒绝，不做「尽力恢复」。 */
+/** 导入失败的原因。消息是给人看的，会原样出现在界面上。 */
+export class SaveValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SaveValidationError';
+  }
+}
+
+/**
+ * 手动导出：一个能存进 .json 文件、也能直接读的字符串。
+ *
+ * 外壳里单独写一份版本号，是为了在解析存档本体之前就能判断
+ * 「这份文件是不是更新版本的游戏存的」——本体形状可能已经变了。
+ */
+export function exportSave(data: SaveData): string {
+  const envelope: SaveEnvelope = {
+    format: SAVE_FORMAT,
+    version: data.version,
+    savedAt: Date.now(),
+    data,
+  };
+  return JSON.stringify(envelope, null, 2);
+}
+
+/** 导出文件名：`djdjdj-save-2026-11-28-04-59.json`。 */
+export function saveFileName(date: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const d = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const t = `${pad(date.getHours())}-${pad(date.getMinutes())}`;
+  return `djdjdj-save-${d}-${t}.json`;
+}
+
+/** 认识的全部武器谱系。存档里的 weaponKind 必须是其中之一。 */
+const WEAPON_KINDS: ReadonlySet<string> = new Set(WEAPONS.map((w) => w.kind));
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+const RARITIES: ReadonlySet<string> = new Set<Rarity>(['common', 'green', 'blue', 'purple', 'orange']);
+const SLOTS: ReadonlySet<string> = new Set<SlotId>([
+  'head', 'chest', 'hands', 'waist', 'feet', 'weapon', 'ring1', 'ring2',
+]);
+
+/** 强化等级上限。词汇表里写死：必成、+9 封顶。 */
+const MAX_UPGRADE = 9;
+
+/** 煞气上限。词汇表里写死：0–10。 */
+const MAX_MALICE = 10;
+
+/** 一条词条要有 id、掷点与数值，缺一个读进来就会在界面上显示 undefined。 */
+function isAffix(v: unknown): boolean {
+  return (
+    isObject(v) &&
+    typeof v.affixId === 'string' &&
+    typeof v.roll === 'number' &&
+    typeof v.value === 'number'
+  );
+}
+
+/** 一件装备要过得了这几关，否则读进来会在界面上炸。 */
+function checkItem(v: unknown, where: string): void {
+  if (!isObject(v) || typeof v.id !== 'string' || typeof v.defId !== 'string') {
+    throw new SaveValidationError(`存档里的${where}有损坏的装备，读不了。`);
+  }
+  if (!SLOTS.has(v.slot as string)) {
+    throw new SaveValidationError(`存档里的${where}有一件装备的部位认不出来，读不了。`);
+  }
+  if (!RARITIES.has(v.rarity as string)) {
+    throw new SaveValidationError(`存档里的${where}有一件装备的品质认不出来，读不了。`);
+  }
+  if (typeof v.itemLevel !== 'number' || typeof v.baseStat !== 'number') {
+    throw new SaveValidationError(`存档里的${where}有一件装备缺数值，读不了。`);
+  }
+  if (typeof v.upgrade !== 'number' || v.upgrade < 0 || v.upgrade > MAX_UPGRADE) {
+    throw new SaveValidationError(`存档里的${where}有一件装备的强化等级超出 0–${MAX_UPGRADE}，读不了。`);
+  }
+  if (!Array.isArray(v.affixes) || !v.affixes.every(isAffix)) {
+    throw new SaveValidationError(`存档里的${where}有一件装备的词条坏了，读不了。`);
+  }
+}
+
+/** 没有外壳的老导出文件长这样：本体自己带 version。 */
+function looksLikeBareSave(o: Record<string, unknown>): boolean {
+  return (
+    typeof o.version === 'number' &&
+    isObject(o.player) &&
+    Array.isArray(o.inventory) &&
+    isObject(o.equipped)
+  );
+}
+
+/**
+ * 手动导入：校验格式、版本和形状，坏的直接拒绝，不做「尽力恢复」。
+ *
+ * 全部拒绝理由都用 SaveValidationError 抛出，并且说人话 ——
+ * 这是玩家存档出事时唯一能看懂的线索。
+ */
 export function importSave(text: string): SaveData {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new Error('不是合法 JSON');
+    throw new SaveValidationError('这不是合法 JSON：文件可能被别的程序改过，或者选错了文件。');
   }
-  if (typeof parsed !== 'object' || parsed === null) throw new Error('存档格式不对');
+  if (!isObject(parsed)) {
+    throw new SaveValidationError('这不是《地宫》的存档文件：文件内容是空的，或者根本不是存档。');
+  }
 
-  const data = parsed as Partial<SaveData>;
-  if (typeof data.version !== 'number') throw new Error('缺少存档版本');
-  if (data.version > SAVE_VERSION) throw new Error('存档来自更新的版本，读不了');
-  if (!data.player || typeof data.player.level !== 'number') throw new Error('存档缺少角色数据');
-  if (!Array.isArray(data.inventory)) throw new Error('存档缺少背包数据');
-  if (!data.equipped || typeof data.equipped !== 'object') throw new Error('存档缺少装备数据');
+  const envelope = parsed as Partial<SaveEnvelope>;
+
+  let version: unknown;
+  let raw: unknown;
+  if (envelope.format === SAVE_FORMAT) {
+    version = envelope.version;
+    raw = envelope.data;
+  } else if (looksLikeBareSave(parsed)) {
+    // 加界面之前，导出文件是光秃秃的存档本体。老文件照收，不做「尽力恢复」。
+    version = parsed.version;
+    raw = parsed;
+  } else {
+    throw new SaveValidationError('这不是《地宫》的存档文件：认不出文件里的格式标记。请选游戏里「导出存档」下载的 .json 文件。');
+  }
+
+  if (typeof version !== 'number' || !Number.isInteger(version)) {
+    throw new SaveValidationError('存档缺少存档版本，读不了。');
+  }
+  if (version > SAVE_VERSION) {
+    throw new SaveValidationError(
+      `存档来自更新的版本（v${version}），本程序只认到 v${SAVE_VERSION}。请把游戏更新到同一版本再导入。`,
+    );
+  }
+  if (version < 1) {
+    throw new SaveValidationError(`存档版本（v${version}）不对，读不了。`);
+  }
+
+  if (!isObject(raw)) {
+    throw new SaveValidationError('这不是《地宫》的存档文件：里面没有存档本体。');
+  }
+  const data = raw as Partial<SaveData>;
+
+  // 存档本体自己也带版本号。改小外壳骗不过去 —— 本体更新照样拒绝。
+  if (typeof data.version === 'number' && data.version > SAVE_VERSION) {
+    throw new SaveValidationError(
+      `存档本体来自更新的版本（v${data.version}），本程序只认到 v${SAVE_VERSION}。请把游戏更新到同一版本再导入。`,
+    );
+  }
+
+  if (typeof data.seed !== 'number') throw new SaveValidationError('存档缺少随机种子，读不了。');
+
+  const player = data.player;
+  if (!isObject(player)) throw new SaveValidationError('存档缺少角色数据，读不了。');
+  for (const key of ['level', 'exp', 'hp', 'gold', 'ore', 'reforgeStones', 'potions'] as const) {
+    if (typeof player[key] !== 'number') {
+      throw new SaveValidationError(`存档里的角色数据不完整（缺 ${key}），读不了。`);
+    }
+  }
+  if (typeof player.weaponKind !== 'string' || !WEAPON_KINDS.has(player.weaponKind)) {
+    throw new SaveValidationError('存档里的角色数据不完整（武器谱系不对），读不了。');
+  }
+
+  if (typeof data.savedAt !== 'number' || !Number.isFinite(data.savedAt)) {
+    throw new SaveValidationError('存档缺少存档时间，读不了。');
+  }
+
+  if (!Array.isArray(data.inventory)) throw new SaveValidationError('存档缺少背包数据，读不了。');
+  data.inventory.forEach((it, i) => checkItem(it, `背包（第 ${i + 1} 件）`));
+
+  if (!isObject(data.equipped)) throw new SaveValidationError('存档缺少装备数据，读不了。');
+  for (const [slot, it] of Object.entries(data.equipped)) {
+    const name = SLOT_NAMES[slot as SlotId] ?? slot;
+    checkItem(it, `装备栏（${name}）`);
+  }
+
+  if (typeof data.floorId !== 'string' || !FLOOR_BY_ID.has(data.floorId)) {
+    throw new SaveValidationError(
+      `存档里的地宫层「${String(data.floorId)}」本程序没有，读不了。`,
+    );
+  }
+  if (typeof data.malice !== 'number' || data.malice < 0 || data.malice > MAX_MALICE) {
+    throw new SaveValidationError(`存档里的煞气不在 0–${MAX_MALICE} 之间，读不了。`);
+  }
+  if (!isObject(data.controls)) throw new SaveValidationError('存档缺少设置数据，读不了。');
 
   return data as SaveData;
+}
+
+/**
+ * 导入并覆盖本地存档。校验不过就直接抛，**一个字节都不写** ——
+ * 现有存档与 .bak 都原样留着（写盘走的是 saveGame 的「先备份再写」）。
+ *
+ * writer 默认就是 saveGame，测试里可以换掉，用来验证「坏档没写盘」。
+ */
+export async function importAndReplace(
+  text: string,
+  writer: (data: SaveData) => Promise<void> = saveGame,
+): Promise<SaveData> {
+  const data = importSave(text);
+  await writer(data);
+  return data;
 }
 
 /** 每 5 分钟自动存档。返回一个停止函数。 */

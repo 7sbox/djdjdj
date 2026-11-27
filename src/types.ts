@@ -100,6 +100,8 @@ export interface MonsterDef {
   range: number;
   /** 攻击间隔（秒）。 */
   attackInterval: number;
+  /** 护甲。由本定义直接给出，不跟血量挂钩（见 ADR-0007）。 */
+  armor: number;
   /** 首次仇恨半径。 */
   aggroRange: number;
   /** 生成权重。 */

@@ -399,7 +399,8 @@ export function stepWorld(state: WorldState, deps: WorldDeps): void {
 
     for (const m of targets) {
       const mDef = monsterById(m.defId);
-      const armor = mDef.attackForm === 'melee' ? 10 + mDef.hp * 0.02 : 5 + mDef.hp * 0.01;
+      // 护甲是怪物定义上的独立字段，不由血量推算（见 ADR-0007）
+      const armor = mDef.armor;
       const crit = rng.chance(stats.critRate);
       const dmg = computeDamage(
         stats.attack,

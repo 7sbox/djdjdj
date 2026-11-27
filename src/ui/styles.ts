@@ -166,6 +166,17 @@ h4:first-child { margin-top: 0; }
 .kv { display: flex; justify-content: space-between; padding: 2px 0; font-size: 12px; }
 .kv span:first-child { color: var(--ink-dim); }
 
+/* 存档导入/导出的提示条。成功绿、失败红，失败时后面那句一定是「当前存档没有被改动」 */
+.notice {
+  display: flex; align-items: center; gap: 10px; padding: 6px 14px;
+  font-size: 11.5px; border-bottom: 1px solid var(--line);
+}
+.notice .text { flex: 1; }
+.notice .close { color: var(--ink-dim); cursor: pointer; user-select: none; }
+.notice .close:hover { color: var(--ink); }
+.notice.ok { background: #16211a; color: var(--up); }
+.notice.err { background: #221716; color: var(--down); }
+
 .startbar { display: flex; gap: 6px; align-items: center; padding: 8px 10px; border-top: 1px solid var(--line); }
 .note { font-size: 11px; color: var(--ink-dim); }
 `;
