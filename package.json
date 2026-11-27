@@ -3,13 +3,13 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "武侠刷宝挂机动作 RPG —�?垂直切片",
+  "description": "武侠刷宝挂机动作 RPG —— 垂直切片",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --exclude \"**/node_modules/**\" --exclude \"**/.tmp_issue5/**\""
   },
   "dependencies": {
     "preact": "^10.24.3",

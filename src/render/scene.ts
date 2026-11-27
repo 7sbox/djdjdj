@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import type { Monster, Vec2, WorldState } from '../sim/world';
 import { monsterById } from '../data/combat-defs';
+import floorTextureUrl from '../assets/stone_tiles_02.webp?url';
+import wallTextureUrl from '../assets/stone_tile_wall.webp?url';
 
 /**
  * 灰盒渲染层。
@@ -12,11 +14,44 @@ import { monsterById } from '../data/combat-defs';
 /** 性能红线：同屏 60 只小怪 @60fps。 */
 const MAX_INSTANCES = 96;
 
+/**
+ * 贴图：**当前是生成的占位图**，不是 Poly Haven 原件。
+ *
+ * 规格见 docs/design/lighting-and-textures.md：那两张真正的 CC0 原件
+ * （303,178 B + 185,774 B，q90）因本环境拿不到下载，暂以脚本生成的
+ * 石砖纹理占位（各约 18–20 KB，均值对齐规格里的 0x7a7a72 / 0xa9a5a0）。
+ *
+ * 换真件时只需替换 src/assets/ 下同名文件，代码与染色系数都不用动 ——
+ * TINT 是按「贴图均值 → 目标 albedo」算的，均值一致即结果一致。
+ *
+ * 贴图名只许活在这一层：src/sim/ 与 src/types.ts 里不得出现任何贴图名。
+ */
+const TEXTURE_URL = {
+  floor: floorTextureUrl,
+  wall: wallTextureUrl,
+};
+
+/**
+ * 染色系数：把贴图均值拉到目标 albedo，线性空间相乘。
+ * 地面均值 0x7a7a72 → 目标 0x3a444d 得 0x8094b1；
+ * 墙面均值 0xa9a5a0 → 目标 0x2c343b 得 0x475563。
+ * 两端精确还原，所以贴图前后共用同一套目标 albedo。
+ */
+const TINT = {
+  floor: 0x8094b1,
+  wall: 0x475563,
+};
+
+/** 单张图覆盖 4 米。地面 26×30 即 repeat (6.5, 7.5)。 */
+const METERS_PER_TILE = 4;
+
 /** 传奇味配色：青灰 + 暗红 + 一点金。 */
 const PALETTE = {
-  floor: 0x2b3138,
-  wall: 0x1f242a,
-  fog: 0x0b0d10,
+  // 目标 albedo，来自 docs/design/lighting-and-textures.md：
+  // 地面提亮 1.86×、墙 1.92×、雾 2.69×。判据只有「地面线性亮度 1.86 倍」这一条。
+  floor: 0x3a444d,
+  wall: 0x2c343b,
+  fog: 0x151b23,
   gold: 0xd8b46a,
   bloodRed: 0x7a2b28,
   player: 0xc9b48a,
@@ -65,11 +100,14 @@ export class SceneView {
     this.camera.position.set(0, 15, 17);
     this.camera.lookAt(0, 0, 1);
 
-    this.scene.fog = new THREE.Fog(PALETTE.fog, 20, 46);
+    // 雾距松到 (26, 60)：中段雾化系数 0.255 → 0.018，远端 0.590 → 0.275。
+    // 这是性价比最高的一改 —— 不碰任何 albedo，整个纵深方向一起变亮。
+    this.scene.fog = new THREE.Fog(PALETTE.fog, 26, 60);
 
-    // 一盏暖色点光 + 环境光。不用方向光，省掉阴影开销。
-    const ambient = new THREE.AmbientLight(0x8899aa, 0.55);
-    this.scene.add(ambient);
+    // 半球光代替环境光：上冷下暖，暗面有方向而不是平的死灰。
+    // 整体亮度靠它撑，不靠点光 —— decay:2 的点光在 10 米处已衰减到 1/100。
+    const hemi = new THREE.HemisphereLight(0x9fb0c4, 0x2e2620, 0.9);
+    this.scene.add(hemi);
 
     const torch = new THREE.PointLight(PALETTE.gold, 2.2, 34, 2);
     torch.position.set(0, 7, 4);
@@ -158,13 +196,60 @@ export class SceneView {
     this.resize();
   }
 
-  /** 一个房间：地面 + 四面墙。灰盒期所有层共用同一套几何。 */
+  /**
+   * 异步加载一张色贴图，到位后挂到材质上。
+   *
+   * 贴图到位前材质保持**目标 albedo 纯色**；到位后才换成「贴图 × 染色」，
+   * 两者在观感上是同一块亮度，所以不闪也不卡首帧。
+   * 三条必须的：设 sRGB 色彩空间、repeat 按米数算、只在 onLoad 里挂 map。
+   * **不要提前挂空 Texture** —— 那会 bind 到一张 1×1 全零纹理，首帧渲染成纯黑。
+   */
+  private applyTexture(
+    mat: THREE.MeshLambertMaterial,
+    url: string,
+    tint: number,
+    repeatX: number,
+    repeatY: number,
+  ): void {
+    const anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    const loader = new THREE.TextureLoader();
+    loader.load(
+      url,
+      (tex) => {
+        // r170 默认 NoColorSpace，不显式设成 sRGB 就是错的。
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(repeatX, repeatY);
+        tex.anisotropy = anisotropy;
+        mat.map = tex;
+        mat.color.setHex(tint);
+        mat.needsUpdate = true;
+      },
+      undefined,
+      () => {
+        // 加载失败就留在纯色兜底上，不抛错、不黑屏。
+        mat.color.setHex(tint);
+        mat.needsUpdate = true;
+      },
+    );
+  }
+
+  /**
+   * 一个房间：地面 + 四面墙。灰盒期所有层共用同一套几何。
+   *
+   * 四面墙是**朝内的 PlaneGeometry**，不是 BoxGeometry：BoxGeometry 六个面的
+   * UV 一律归一化到 0..1，与物理尺寸无关，而一个 material 只有一个 repeat，
+   * 四面尺寸不同的墙共用必然错位；相机 y=15 俯视时墙顶还全可见、会被拉伸 6.5 倍。
+   */
   private buildRoom(): void {
+    // 地面
     const floorGeo = new THREE.PlaneGeometry(26, 30, 1, 1);
     const floorMat = new THREE.MeshLambertMaterial({ color: PALETTE.floor });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
     this.scene.add(floor);
+    this.applyTexture(floorMat, TEXTURE_URL.floor, TINT.floor, 26 / METERS_PER_TILE, 30 / METERS_PER_TILE);
 
     // 地面缝隙线，让平面不至于看不出移动
     const grid = new THREE.GridHelper(30, 15, 0x3a424c, 0x333a43);
@@ -174,20 +259,27 @@ export class SceneView {
     gridMat.opacity = 0.35;
     this.scene.add(grid);
 
-    const wallMat = new THREE.MeshLambertMaterial({ color: PALETTE.wall });
-    const walls: [number, number, number, number, number, number][] = [
-      [26, 4, 0.8, 0, 2, -15],
-      [26, 4, 0.8, 0, 2, 21],
-      [0.8, 4, 30, -13, 2, 3],
-      [0.8, 4, 30, 13, 2, 3],
+    // 墙：四面各一片，朝向房间内部。长短边平铺次数不同，故分两个材质。
+    const wallMatLong = new THREE.MeshLambertMaterial({ color: PALETTE.wall });
+    const wallMatShort = new THREE.MeshLambertMaterial({ color: PALETTE.wall });
+    this.applyTexture(wallMatLong, TEXTURE_URL.wall, TINT.wall, 26 / METERS_PER_TILE, 4 / METERS_PER_TILE);
+    this.applyTexture(wallMatShort, TEXTURE_URL.wall, TINT.wall, 30 / METERS_PER_TILE, 4 / METERS_PER_TILE);
+
+    // [宽, 高, 中心 x, 中心 y, 中心 z, 绕 y 旋转, 材质]
+    const walls: [number, number, number, number, number, number, THREE.Material][] = [
+      [26, 4, 0, 2, -15, 0, wallMatLong],              // 前墙，面向 +z
+      [26, 4, 0, 2, 21, Math.PI, wallMatLong],         // 后墙，面向 -z
+      [30, 4, -13, 2, 3, Math.PI / 2, wallMatShort],   // 左墙，面向 +x
+      [30, 4, 13, 2, 3, -Math.PI / 2, wallMatShort],   // 右墙，面向 -x
     ];
-    for (const [w, h, d, x, y, z] of walls) {
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
+    for (const [w, h, x, y, z, ry, mat] of walls) {
+      const wall = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
       wall.position.set(x, y, z);
+      wall.rotation.y = ry;
       this.scene.add(wall);
     }
 
-    // 断碑：剧情钩子的视觉锚点
+    // 断碑：剧情钩子的视觉锚点。本版不换材质。
     const stele = new THREE.Mesh(
       new THREE.BoxGeometry(1.6, 3.0, 0.4),
       new THREE.MeshLambertMaterial({ color: 0x3c4650 }),
