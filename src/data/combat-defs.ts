@@ -9,51 +9,51 @@ export const MONSTERS: readonly MonsterDef[] = [
   {
     id: 'm_dog', name: '野狗', tier: 'normal',
     attackForm: 'melee', damageType: 'physical',
-    hp: 90, damage: 9, speed: 0.055, range: 1.6, attackInterval: 1.2,
+    hp: 90, damage: 9, speed: 0.30, range: 1.6, attackInterval: 1.2,
     aggroRange: 9, weight: 30,
   },
   {
     id: 'm_golem', name: '石傀', tier: 'normal',
     attackForm: 'melee', damageType: 'physical',
-    hp: 260, damage: 18, speed: 0.022, range: 1.8, attackInterval: 2.0,
+    hp: 260, damage: 18, speed: 0.15, range: 1.8, attackInterval: 2.0,
     aggroRange: 7, weight: 18,
   },
   {
     id: 'm_gu', name: '蛊虫', tier: 'normal',
     attackForm: 'melee', damageType: 'magic',
-    hp: 70, damage: 7, speed: 0.048, range: 1.4, attackInterval: 1.0,
+    hp: 70, damage: 7, speed: 0.28, range: 1.4, attackInterval: 1.0,
     aggroRange: 8, weight: 26,
   },
   // ── 远程 3 种 ────────────────────────────────────────────
   {
     id: 'm_archer', name: '山贼弓手', tier: 'normal',
     attackForm: 'ranged', damageType: 'physical',
-    hp: 110, damage: 12, speed: 0.03, range: 8, attackInterval: 1.6,
+    hp: 110, damage: 12, speed: 0.16, range: 8, attackInterval: 1.6,
     aggroRange: 11, weight: 16,
   },
   {
     id: 'm_warlock', name: '邪术士', tier: 'normal',
     attackForm: 'ranged', damageType: 'magic',
-    hp: 80, damage: 22, speed: 0.018, range: 7, attackInterval: 2.8,
+    hp: 80, damage: 22, speed: 0.09, range: 7, attackInterval: 2.8,
     aggroRange: 10, weight: 12,
   },
   {
     id: 'm_firei', name: '火魈', tier: 'normal',
     attackForm: 'ranged', damageType: 'magic',
-    hp: 130, damage: 15, speed: 0.028, range: 6, attackInterval: 2.0,
+    hp: 130, damage: 15, speed: 0.15, range: 6, attackInterval: 2.0,
     aggroRange: 10, weight: 14,
   },
   // ── Boss 2 种 ────────────────────────────────────────────
   {
     id: 'm_boss_earth', name: '守碑石将', tier: 'boss',
     attackForm: 'melee', damageType: 'physical',
-    hp: 8000, damage: 55, speed: 0.026, range: 3.2, attackInterval: 2.2,
+    hp: 8000, damage: 55, speed: 0.12, range: 3.2, attackInterval: 2.2,
     aggroRange: 12, weight: 0,
   },
   {
     id: 'm_boss_serpent', name: '幽窟蛇母', tier: 'boss',
     attackForm: 'ranged', damageType: 'magic',
-    hp: 7200, damage: 48, speed: 0.03, range: 7.5, attackInterval: 1.9,
+    hp: 7200, damage: 48, speed: 0.14, range: 7.5, attackInterval: 1.9,
     aggroRange: 12, weight: 0,
   },
 ];

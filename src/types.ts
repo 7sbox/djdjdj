@@ -94,7 +94,10 @@ export interface MonsterDef {
   damageType: DamageType;
   hp: number;
   damage: number;
-  /** 每逻辑帧移动速度（米/帧）。 */
+  /**
+   * 每逻辑帧移动距离（米/帧）。实际秒速 = speed / TICK_SECONDS（0.2 秒一帧）。
+   * 房间 26×30 米、刷怪半径 9–14 米，所以这个数要保证「最远 20 秒内够得着人」。
+   */
   speed: number;
   /** 攻击距离（米）。近战约 1.5，远程 6–9。 */
   range: number;

@@ -9,7 +9,7 @@
 ```bash
 pnpm install
 pnpm dev      # http://localhost:5273
-pnpm test     # 52 项逻辑测试
+pnpm test     # 71 项逻辑测试
 pnpm build    # 类型检查 + 打包
 ```
 
@@ -32,6 +32,7 @@ pnpm build    # 类型检查 + 打包
 | [ADR-0003](docs/adr/0003-item-level-bound-to-zone.md) | 装备等级为什么固定于区域 |
 | [ADR-0004](docs/adr/0004-affix-slot-exclusivity.md) | 词条为什么必须严格部位专属 |
 | [ADR-0005](docs/adr/0005-death-interrupts-farming.md) | 挂机为什么可以死但不掉装备 |
+| [ADR-0006](docs/adr/0006-boss-guaranteed-purple-over-pace.md) | 紫装节奏为什么改成实测值 |
 
 ## 结构
 

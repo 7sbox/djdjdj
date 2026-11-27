@@ -9,12 +9,21 @@ import {
 import { createRng, shortId, type Rng } from './rng';
 
 /**
- * 品质权重（普通怪）。白 60 / 绿 28 / 蓝 10 / 紫 1.9 / 橙 0.1
+ * 品质权重（普通怪）：白 62 / 绿 32 / 蓝 5 / 紫 0.4 / 橙 0.05。
+ *
+ * 标定口径是「品质梯度」而不是某个绝对时间点：绿最早、蓝其次、紫是塔尖，
+ * 三者数量级递减。实测（挂机约 6–9 只/分钟、12% 掉率、15 种子取中位）：
+ * 第一件绿约 1 分钟、蓝约 5 分钟、紫约 17 分钟。
+ *
+ * 注意紫色产量最终由「Boss 必掉紫 + 自动跑图」决定，不是由这张表决定的 ——
+ * 把紫色权重压到 0.15% 也几乎不影响出紫速度。要让紫更稀有，该动 Boss 保底
+ * 或再入频率，见 docs/adr/0006-boss-guaranteed-purple-over-pace.md。
+ * 改这张表之前先跑 `pnpm test` 里的品质梯度用例。
  */
-const NORMAL_RARITY_WEIGHTS = [60, 28, 10, 1.9, 0.1] as const;
+const NORMAL_RARITY_WEIGHTS = [62, 32, 5, 0.4, 0.05] as const;
 
-/** 精英怪：品质池提升一档。 */
-const ELITE_RARITY_WEIGHTS = [34, 38, 21, 6, 1] as const;
+/** 精英怪：品质池提升一档，但仍然稀有。 */
+const ELITE_RARITY_WEIGHTS = [42, 40, 16, 1.8, 0.2] as const;
 
 /** 煞气对高品质权重的微升系数（每级 +8%）。 */
 const MALICE_HIGH_TIER_BONUS = 0.08;
@@ -181,9 +190,18 @@ export function itemDisplayName(item: Item): string {
   return prefix ? `${prefix}·${def.baseName}${upgradeSuffix}` : `${def.baseName}${upgradeSuffix}`;
 }
 
-/** 拆解产出的强化矿数量：白1 绿3 蓝8 紫20 橙50。 */
+/**
+ * 拆解产出的强化矿数量：白1 绿3 蓝8 紫20 橙50。
+ *
+ * 这是全项目唯一一张拆解表 —— 结算、界面、自动拆凡品都从这里取，
+ * 免得哪天调了数值却只改到一半。
+ */
+export const SALVAGE_YIELD: Readonly<Record<Rarity, number>> = {
+  common: 1, green: 3, blue: 8, purple: 20, orange: 50,
+};
+
 export function salvageYield(rarity: Rarity): number {
-  return { common: 1, green: 3, blue: 8, purple: 20, orange: 50 }[rarity];
+  return SALVAGE_YIELD[rarity];
 }
 
 /** 强化消耗：第 n 级消耗的矿量。必成、不降级。 */

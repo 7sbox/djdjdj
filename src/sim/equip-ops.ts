@@ -1,5 +1,12 @@
 import type { Item, Rarity, SlotId } from '../types';
-import { MAX_UPGRADE, rollAffixes, synthTargetRarity, upgradeCost, upgradeMultiplier } from './loot';
+import {
+  MAX_UPGRADE,
+  rollAffixes,
+  salvageYield,
+  synthTargetRarity,
+  upgradeCost,
+  upgradeMultiplier,
+} from './loot';
 import type { Rng } from './rng';
 
 /** 装备操作的统一返回：成功就把新物品带回来，失败给出人话原因。 */
@@ -132,9 +139,9 @@ export function synthItems(
   return { ok: true, value: { item: { ...item, upgrade: bestUpgrade } } };
 }
 
-/** 拆解：只产出强化矿。 */
+/** 拆解：只产出强化矿。表在 loot.ts，这里只是个别名，别再抄一份。 */
 export function salvageYieldOf(rarity: Rarity): number {
-  return { common: 1, green: 3, blue: 8, purple: 20, orange: 50 }[rarity];
+  return salvageYield(rarity);
 }
 
 /** 这件装备的当前实际白值（含强化）。 */
