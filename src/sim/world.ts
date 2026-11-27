@@ -107,6 +107,11 @@ export interface WorldState {
     scrollPages: number;
     /** 技能的冷却剩余（按技能 id）。 */
     cooldowns: Record<string, number>;
+    /**
+     * 喝药的冷却剩余（秒）。没有它时，一帧内 hp 低于线就会连喝两颗 ——
+     * 药不成其为资源，「关掉自动喝药必死」那条判据也就失去了对照价值。
+     */
+    potionCd: number;
     weaponKind: WeaponKind;
     attackCd: number;
     alive: boolean;
@@ -192,12 +197,13 @@ export function createWorld(opts: {
       maxHp: 100,
       pos: { ...PLAYER_HOME },
       mp: 0,
-      potions: 5,
-      gold: 0,
+      potions: STARTING_POTIONS,
+      gold: STARTING_GOLD,
       ore: 0,
       reforgeStones: 0,
       scrollPages: 0,
       cooldowns: {},
+      potionCd: 0,
       // 武器决定武学：开局那一身装备就决定你现在会什么
       weaponKind: weaponKindFromEquipped(opts.equipped),
       attackCd: 0,
@@ -394,11 +400,17 @@ export function stepWorld(state: WorldState, deps: WorldDeps): void {
   }
 
 
-  // ── 自动喝药（血量低于 40%）───────────────────────────────
-  if (state.controls.autoPotion && p.hp / p.maxHp < 0.4 && p.potions > 0) {
-    const heal = Math.round(p.maxHp * 0.35);
+  // ── 自动喝药（血量低于阈值，带冷却）─────────────────────────
+  if (
+    state.controls.autoPotion &&
+    p.potionCd <= 0 &&
+    p.hp / p.maxHp < POTION_HEAL_THRESHOLD &&
+    p.potions > 0
+  ) {
+    const heal = Math.round(p.maxHp * POTION_HEAL_RATIO);
     p.hp = Math.min(p.maxHp, p.hp + heal);
     p.potions--;
+    p.potionCd = POTION_COOLDOWN;
     float(state, `+${heal}`, 'heal', p.pos);
   }
 
@@ -675,6 +687,7 @@ function tickTimers(state: WorldState): void {
   for (const k of Object.keys(state.player.cooldowns)) {
     state.player.cooldowns[k] = Math.max(0, (state.player.cooldowns[k] ?? 0) - TICK_SECONDS);
   }
+  state.player.potionCd = Math.max(0, state.player.potionCd - TICK_SECONDS);
 
   for (const f of state.floating) {
     f.life -= TICK_SECONDS;
@@ -813,6 +826,45 @@ export const POTION_PRICE = 40;
 
 /** 丹囊上限：一次最多带这么多颗。 */
 export const WANTED_POTIONS = 10;
+
+/**
+ * 新角色的初始丹量。
+ *
+ * 原先 5 颗时，实测前 79 秒就药尽而亡（同期只赚到 54 金，够买 1 颗）：
+ * 开局那一轮的消耗远大于 5 颗，Boss 房根本走不到。10 颗 = 丹囊一次装满的量，
+ * 正好「够打一轮但打不了三小时」—— 药钱压力仍在，只是不再是开局即死。
+ */
+export const STARTING_POTIONS = 10;
+
+/**
+ * 新角色的初始金币。
+ *
+ * 只够补两颗丹（80 金）。给钱不是为了富裕，是为了让「自动补丹」这个开关
+ * 在开局就有意义：一分没有时它什么也做不了，玩家会以为开关坏了。
+ */
+export const STARTING_GOLD = 80;
+
+/**
+ * 喝药冷却（秒）。
+ *
+ * 没有它时，一帧（0.2 秒）内 hp 低于线就会连喝两颗：药不是资源，是个摆设。
+ * 8 秒的设计含义：一次回 35% maxHp，平均每秒回 4.4% ——
+ * 低于这个速率的持续承伤就补不住，正是「装备差硬撑高层会烧光药钱」那条经济压力。
+ */
+export const POTION_COOLDOWN = 8;
+
+/** 血量低于这个比率自动喝药。 */
+export const POTION_HEAL_THRESHOLD = 0.4;
+
+/**
+ * 一颗丹回多少血量（占上限的比率）。
+ *
+ * 实测承伤 18/秒、冷却 8 秒 → 一个冷却周期掉 144 点；maxHp 444 时
+ * 35% = 155 点，只富余 11 点，任何波动都会入不敷出（实测从 58 秒起
+ * 每次喝药前都已跌到 19–25%，逐级下滑到死）。
+ * 提到 60% 才有明确的余量，同时不到「一口回满」那种无压力。
+ */
+export const POTION_HEAL_RATIO = 0.6;
 
 /**
  * 补丹：按「能买几颗就买几颗」把丹囊补到上限。

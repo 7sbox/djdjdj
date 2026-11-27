@@ -95,6 +95,8 @@ describe('挂机被打断', () => {
 
   it('自动喝药会消耗丹药，药有限', () => {
     const { world } = makeWorld();
+    // 关掉自动补丹：这条测的是「喝药扣药」，不是「补丹能不能补上」
+    world.controls.autoBuyPotions = false;
     world.player.hp = world.player.maxHp * 0.2;
     world.player.potions = 2;
     stepWorld(world, { rng: createRng(3), equipped: {}, onLoot: () => {}, onKill: () => {} });
