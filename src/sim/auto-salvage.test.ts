@@ -36,9 +36,8 @@ describe('自动拆解凡品（挂机开关）', () => {
 
     const commons = kept.filter((i) => i.rarity === 'common');
     expect(commons, '凡品还是进了背包').toHaveLength(0);
-    expect(world.player.ore, '拆了凡品却没拿到矿').toBeGreaterThan(0);
-    // 每件凡品拆 1 矿，矿的总量应当与「本该掉落的凡品数」对得上
-    expect(world.player.ore).toBeGreaterThanOrEqual(commons.length);
+    // 30 分钟里凡品占大头，拆完应该拿到实实在在一笔矿（每件 1 矿）
+    expect(world.player.ore, `整段挂机只拆出 ${world.player.ore} 矿`).toBeGreaterThan(5);
   });
 
   it('关掉后凡品照常进背包', () => {

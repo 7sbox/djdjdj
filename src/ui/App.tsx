@@ -6,7 +6,9 @@ import { createRng, type Rng } from '../sim/rng';
 import { rollItem } from '../sim/loot';
 import {
   DEFAULT_KILL_RATE,
+  POTION_PRICE,
   TICK_SECONDS,
+  buyPotion,
   changeFloor,
   computeOfflineReward,
   createWorld,
@@ -110,6 +112,7 @@ export function App() {
           ...world.controls,
           ...saved.controls,
           autoSalvageCommon: saved.controls.autoSalvageCommon ?? false,
+          autoBuyPotions: saved.controls.autoBuyPotions ?? true,
           retreatAt: saved.controls.retreatAt ?? 0,
         };
         const s = playerStats(world, gear);
@@ -370,6 +373,18 @@ export function App() {
           <span class="stat">矿 <b class="num">{world?.player.ore ?? 0}</b></span>
           <span class="stat">石 <b class="num">{world?.player.reforgeStones ?? 0}</b></span>
           <span class="stat">丹 <b class="num">{world?.player.potions ?? 0}</b></span>
+          <button
+            class="btn"
+            onClick={() => {
+              const w = worldRef.current;
+              if (!w) return;
+              const res = buyPotion(w);
+              forceTick((t) => t + 1);
+              setMessage(res.ok ? `补丹 ${res.bought} 颗。` : (res.reason ?? '补不了'));
+            }}
+          >
+            补丹 {POTION_PRICE}金
+          </button>
           <span class="spacer" />
           <button class="btn" onClick={() => void persist().then(() => setMessage('已存档。'))}>
             存档
@@ -422,6 +437,17 @@ export function App() {
                   }}
                 >
                   自动武学
+                </div>
+                <div
+                  class={`tg ${world?.controls.autoBuyPotions ? 'on' : ''}`}
+                  onClick={() => {
+                    const w = worldRef.current;
+                    if (!w) return;
+                    w.controls.autoBuyPotions = !w.controls.autoBuyPotions;
+                    forceTick((t) => t + 1);
+                  }}
+                >
+                  自动补丹
                 </div>
                 <div
                   class={`tg ${world?.controls.autoSalvageCommon ? 'on' : ''}`}
@@ -519,7 +545,7 @@ export function App() {
                 <div class="kv"><span>房间</span><span>{world ? `${Math.min(world.roomIndex + 1, 4)} / 4` : '—'}</span></div>
                 <div class="kv"><span>怪物数</span><span class="num">{world?.monsters.length ?? 0}</span></div>
                 <div class="note" style="margin-top:8px">
-                  人物自己打。你能改的只有三件事：吃不吃药、武学自动放不放、要不要再入挖矿。
+                  人物自己打。你能改的只有五件事：吃不吃药、武学自动放不放、药要不要自动补、凡品要不要自动拆、要不要再入挖矿。
                 </div>
               </div>
             )}

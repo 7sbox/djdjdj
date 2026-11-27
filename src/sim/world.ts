@@ -53,7 +53,7 @@ export interface WorldLogEntry {
   text: string;
 }
 
-/** 三个手动开关（Q9）。 */
+/** 五个手动开关（Q9）。 */
 export interface PlayerControls {
   /** 自动喝药：血量低于 40% 时自动服丹。关掉就完全不喝。 */
   autoPotion: boolean;
@@ -66,6 +66,14 @@ export interface PlayerControls {
    * 拆解这条出口在头十分钟里形同不存在。
    */
   autoSalvageCommon: boolean;
+
+  /**
+   * 自动补丹：丹囊空了就拿金币补到上限。
+   *
+   * ADR-0005 的药钱压力仍然成立 —— 它花的是真金白银，装备差硬撑高层照样烧光。
+   * 但「买药」这件事本身不该需要玩家盯着，否则挂机就不省心了。
+   */
+  autoBuyPotions: boolean;
   /** 主动技优先级顺序（技能 id）。冲突时先放前面的。 */
   skillPriority: string[];
   /** 撤退线：血量低于此比率自动往回走。0 表示不撤退。 */
@@ -182,6 +190,7 @@ export function createWorld(opts: {
       autoPotion: true,
       autoSkills: true,
       autoSalvageCommon: false,
+      autoBuyPotions: true,
       skillPriority: ['sk_sword_swirl', 'sk_sword_pierce', 'sk_sword_step'],
       retreatAt: 0,
     },
@@ -211,32 +220,30 @@ export function playerStats(state: WorldState, equipped: Partial<Record<SlotId, 
   return clampStats(combineStats(fromLevel, fromGear));
 }
 
-/** 刷怪半径：以玩家为圆心，在这个环带里出现。 */
+/** 刷怪环带的内径：再靠近就变成贴脸刷了。 */
 const SPAWN_RADIUS_MIN = 9;
-const SPAWN_RADIUS_MAX = 14;
-
-/** 生成点离玩家最多这么远，保证每只怪都进得了仇恨圈。 */
-const SPAWN_MAX_PLAYER_DISTANCE = SPAWN_RADIUS_MAX - 1;
 
 /**
- * 生成一个「一定够得着玩家」的坐标。
+ * 生成一个「刷出来就在自己仇恨圈里」的坐标。
  *
  * 以前是绕房间原点撒点，而这个房间的中心并不是玩家的位置 —— 于是背对玩家的那一侧
  * 会刷出离玩家 15–20 米、却只有 7–11 米仇恨圈的怪。它永远不追、永远不死，
  * 房间清不空，自动跑图当场死锁。
  *
- * 这里以玩家为圆心撒点，并保证落点到玩家的距离不超过仇恨范围：
- * 怪可以慢，但必须走得过来。
+ * 现在以玩家为圆心撒点，并把半径夹到 [min, aggroRange] 之间：
+ *
+ * - 上限取 aggroRange，因为出了仇恨圈的怪永远不会进入追击状态；
+ * - 下限本来是 SPAWN_RADIUS_MIN，但仇恨圈比它更小的怪（石傀 7 米、蛊虫 8 米）
+ *   会被顶到圈外 —— 所以内径必须让位，宁可贴得近一点，也不能刷出一只不动的怪。
  */
 function spawnPos(
   rng: Rng,
   playerPos: Vec2,
   aggroRange: number,
 ): Vec2 {
-  const maxDist = Math.min(
-    SPAWN_MAX_PLAYER_DISTANCE,
-    Math.max(SPAWN_RADIUS_MIN, aggroRange - 1),
-  );
+  // 留 0.5 米余量：既避开浮点误差把「刚好在圈上」算成圈外，
+  // 也避开仇恨判定用的是严格比较边缘。
+  const maxDist = Math.max(0.5, aggroRange - 0.5);
   const minDist = Math.min(SPAWN_RADIUS_MIN, maxDist);
   const angle = rng.next() * Math.PI * 2;
   const radius = minDist + rng.next() * (maxDist - minDist);
@@ -355,6 +362,12 @@ export function stepWorld(state: WorldState, deps: WorldDeps): void {
   if (state.controls.retreatAt > 0 && p.hp / p.maxHp < state.controls.retreatAt) {
     p.pos = moveToward(p.pos, PLAYER_HOME, 0.06);
   }
+
+  // ── 自动补丹：有钱就补，按颗买 ────────────────────────────
+  if (state.controls.autoBuyPotions && p.potions < WANTED_POTIONS) {
+    buyPotion(state);
+  }
+
 
   // ── 自动喝药（血量低于 40%）───────────────────────────────
   if (state.controls.autoPotion && p.hp / p.maxHp < 0.4 && p.potions > 0) {
@@ -494,9 +507,9 @@ export function stepWorld(state: WorldState, deps: WorldDeps): void {
         );
         // 自动拆解凡品：直接变矿，不占背包，也不占玩家的注意力
         if (state.controls.autoSalvageCommon && rarity === 'common') {
-          const yield_ = salvageYield(rarity);
-          state.player.ore += yield_;
-          float(state, `矿+${yield_}`, 'loot', m.pos);
+          const oreGain = salvageYield(rarity);
+          state.player.ore += oreGain;
+          float(state, `矿+${oreGain}`, 'loot', m.pos);
           continue;
         }
         deps.onLoot(item);
@@ -670,6 +683,45 @@ function float(
 function pushLog(state: WorldState, text: string): void {
   state.log.push({ t: state.elapsed, text });
   if (state.log.length > 60) state.log.shift();
+}
+
+/**
+ * 丹药标价。
+ *
+ * 标定口径：第一层挂机 30 分钟的金币收入约 1400–1700（每杀一只 3–6 金）。
+ * 药价要让「药钱吃掉收入的一大块，但补得起」——吃不起就没法挂，白送就没压力。
+ * 实测 6 颗/分钟的上限下，30 分钟大约要补 25–35 颗，取 40 金一颗约花 1000–1400，
+ * 刚好把刷怪收入吃掉大半：ADR-0005 想要的「药钱压力」在，但不是死局。
+ */
+export const POTION_PRICE = 40;
+
+/** 丹囊上限：一次最多带这么多颗。 */
+export const WANTED_POTIONS = 10;
+
+/**
+ * 补丹：按「能买几颗就买几颗」把丹囊补到上限。
+ *
+ * 一次买满是个陷阱：丹囊见底时手上往往正好没那么多钱，于是永远补不上、
+ * 一直喝到 0 再连续死亡。所以这里逐颗买 —— 有多少钱先补多少颗，
+ * 挂机自然会把丹囊维持在能吃几口药的水平。
+ *
+ * ADR-0005 说的「药钱会烧光」依然成立：花的是真金白银，钱不够就真的补不上。
+ */
+export function buyPotion(state: WorldState): { ok: boolean; bought: number; reason?: string } {
+  const p = state.player;
+  const missing = WANTED_POTIONS - p.potions;
+  if (missing <= 0) return { ok: false, bought: 0, reason: `丹囊已经满了（${WANTED_POTIONS} 颗）` };
+
+  const affordable = Math.min(missing, Math.floor(p.gold / POTION_PRICE));
+  if (affordable <= 0) {
+    return { ok: false, bought: 0, reason: `金币不足（一颗要 ${POTION_PRICE}）` };
+  }
+
+  const cost = affordable * POTION_PRICE;
+  p.gold -= cost;
+  p.potions += affordable;
+  pushLog(state, `补丹 ${affordable} 颗，花 ${cost} 金。`);
+  return { ok: true, bought: affordable };
 }
 
 /** 再入本层：煞气 +1，重新刷怪。 */

@@ -10,31 +10,46 @@ import { TICK_SECONDS, createWorld, playerStats, resumeFarming, stepWorld } from
  *
  * 所有数字都从真实世界循环（createWorld / stepWorld）里跑出来。
  * 玩家行为固定为设计允许的那几件事：死了点「继续挂机」、穿上掉到的最好的、
- * 背包满了拆凡品。阈值是 docs/design/vertical-slice-spec.md §二 的目标，
+ * 背包满了拆凡品。阈值取自 docs/design/vertical-slice-spec.md §二，
  * 用 15 个种子取中位数 —— 单一种子的偶然性太大，不足以代表「期望状态」。
  */
-
-/** 部位归一：两枚戒指可互换，所以「一身」是 7 个需求而不是 8 个槽。 */
-const NEEDED_SLOTS = 7;
 
 const MIN = 60;
 const SEEDS = [11, 22, 33, 44, 55, 66, 77, 88, 99, 111, 222, 333, 444, 555, 666];
 
-interface Run {
-  drops: number;
-  /** 凑齐一身绿（7 个部位需求）的时刻，秒；没凑齐为 null。 */
+/** 背包上限，与 App 里一致。 */
+const INVENTORY_LIMIT = 80;
+
+/** 两枚戒指可互换，所以「一身」是 7 个部位需求而不是 8 个槽。 */
+const NEEDED_SLOTS = 7;
+
+/** 挂机一趟攒下来的所有可观察结果。 */
+interface FarmRun {
+  /** 按掉落顺序记录，含掉落发生的游戏内秒数。 */
+  dropped: { rarity: Item['rarity']; slot: string; at: number }[];
+  /** 每个部位第一次拿到「精良或更好」的时刻，秒。 */
   fullGreenAt: number | null;
+  /** 各品质第一次出现的时刻，秒。 */
   first: Partial<Record<Item['rarity'], number>>;
+  /** 各品质的件数。 */
+  tally: Record<Item['rarity'], number>;
   interruptions: number;
   malice: number;
+  ore: number;
 }
 
-/** 挂机一段时间，玩家行为按设计只做那几件事。 */
-function farm(rng: Rng, seconds: number): Run {
+/**
+ * 挂机一段时间。玩家只做设计允许的那几件事，这是「挂机省心」的定义本身：
+ * 不用盯着，死了回来点一下继续，捡到更好的就换上，背包满了拆凡品。
+ */
+function farm(rng: Rng, seconds: number): FarmRun {
   const equipped: Partial<Record<SlotId, Item>> = {};
   const world = createWorld({ rng, floorId: 'f1', equipped });
   const stash: Item[] = [];
-  const seen: { rarity: Item['rarity']; slot: string; at: number }[] = [];
+  const dropped: FarmRun['dropped'] = [];
+  const tally: Record<Item['rarity'], number> = {
+    common: 0, green: 0, blue: 0, purple: 0, orange: 0,
+  };
   let interruptions = 0;
 
   const rank = (i: Item) => RARITY_ORDER.indexOf(i.rarity) * 1e6 + effectiveBaseStat(i);
@@ -44,16 +59,20 @@ function farm(rng: Rng, seconds: number): Run {
     rng,
     equipped,
     onLoot: (item: Item) => {
-      seen.push({ rarity: item.rarity, slot: slotKey(item.slot), at: world.elapsed });
+      dropped.push({ rarity: item.rarity, slot: slotKey(item.slot), at: world.elapsed });
+      tally[item.rarity]++;
       stash.push(item);
+
       // 垃圾的出口：背包满了先拆凡品，不够再拆精良
-      while (stash.length >= 80) {
+      while (stash.length >= INVENTORY_LIMIT) {
         const victim =
           stash.find((i) => i.rarity === 'common') ?? stash.find((i) => i.rarity === 'green');
         if (!victim) break;
         stash.splice(stash.indexOf(victim), 1);
         world.player.ore += salvageYieldOf(victim.rarity);
       }
+
+      // 捡到更好的就换上 —— 这才是刷宝循环的真实形态
       const cur = equipped[item.slot];
       if (!cur || rank(item) > rank(cur)) equipped[item.slot] = item;
       world.player.maxHp = playerStats(world, equipped).hp;
@@ -71,18 +90,18 @@ function farm(rng: Rng, seconds: number): Run {
 
   const filled = new Set<string>();
   let fullGreenAt: number | null = null;
-  for (const d of seen) {
+  const first: Partial<Record<Item['rarity'], number>> = {};
+  for (const d of dropped) {
+    if (first[d.rarity] === undefined) first[d.rarity] = d.at;
     if (RARITY_ORDER.indexOf(d.rarity) >= 1) filled.add(d.slot);
     if (filled.size >= NEEDED_SLOTS && fullGreenAt === null) fullGreenAt = d.at;
   }
-  const first: Partial<Record<Item['rarity'], number>> = {};
-  for (const d of seen) if (first[d.rarity] === undefined) first[d.rarity] = d.at;
 
-  return { drops: seen.length, fullGreenAt, first, interruptions, malice: world.malice };
+  return { dropped, fullGreenAt, first, tally, interruptions, malice: world.malice, ore: world.player.ore };
 }
 
-/** 多跑几个种子，取中位数 —— 单次挂机的运气成分太大。 */
-function medianOf(seconds: number, pick: (r: Run) => number | null | undefined): number | null {
+/** 对 15 个种子各跑一趟，把每趟的某个数字取中位数。 */
+function medianOf(seconds: number, pick: (r: FarmRun) => number | null | undefined): number | null {
   const xs: number[] = [];
   for (const seed of SEEDS) {
     const v = pick(farm(createRng(seed + seconds), seconds));
@@ -110,46 +129,25 @@ describe('刷起来爽不爽：掉落节奏与品质梯度', () => {
     const green = medianOf(120 * MIN, (r) => r.first.green);
     const blue = medianOf(120 * MIN, (r) => r.first.blue);
     const purple = medianOf(120 * MIN, (r) => r.first.purple);
-    expect(green).not.toBeNull();
-    expect(blue).not.toBeNull();
-    expect(purple).not.toBeNull();
+    expect(green, '两小时内没出绿').not.toBeNull();
+    expect(blue, '两小时内没出蓝').not.toBeNull();
+    expect(purple, '两小时内没出紫').not.toBeNull();
     expect(green!).toBeLessThan(blue!);
     expect(blue!).toBeLessThan(purple!);
   });
 
   it('紫色是塔尖：比绿少一个数量级，比蓝也明显少', () => {
-    // 注意：紫色产量最终由「Boss 必掉紫 + 自动跑图」决定，不是由权重决定的。
+    // 紫色产量最终由「Boss 必掉紫 + 自动跑图」决定，不是由权重决定的。
     // 所以这里守的是「梯度关系」而不是绝对件数 —— 规格 §二 的「2 小时第一件紫」
-    // 与 §三 的「Boss 必掉紫」在自动跑图下互斥，见 docs/design/vertical-slice-spec.md。
-    const counts = { common: [] as number[], green: [] as number[], blue: [] as number[], purple: [] as number[] };
-    for (const seed of SEEDS) {
-      const rng = createRng(seed + 120 * MIN);
-      const equipped: Partial<Record<SlotId, Item>> = {};
-      const world = createWorld({ rng, floorId: 'f1', equipped });
-      const tally: Record<string, number> = { common: 0, green: 0, blue: 0, purple: 0, orange: 0 };
-      const deps = {
-        rng,
-        equipped,
-        onLoot: (item: Item) => {
-          tally[item.rarity] = (tally[item.rarity] ?? 0) + 1;
-          const cur = equipped[item.slot];
-          if (!cur || RARITY_ORDER.indexOf(item.rarity) > RARITY_ORDER.indexOf(cur.rarity)) {
-            equipped[item.slot] = item;
-          }
-          world.player.maxHp = playerStats(world, equipped).hp;
-        },
-        onKill: () => {},
-      };
-      for (let i = 0; i < Math.round((120 * MIN) / TICK_SECONDS); i++) {
-        if (world.interrupted) resumeFarming(world, rng);
-        stepWorld(world, deps);
-      }
-      for (const k of Object.keys(counts) as (keyof typeof counts)[]) counts[k].push(tally[k]!);
-    }
+    // 与 §三 的「Boss 必掉紫」在自动跑图下互斥，见 ADR-0006。
+    const tallies = SEEDS.map((seed) => farm(createRng(seed + 120 * MIN), 120 * MIN).tally);
     const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]!; };
-    const c = median(counts.common), g = median(counts.green), b = median(counts.blue), p = median(counts.purple);
+    const c = median(tallies.map((t) => t.common));
+    const g = median(tallies.map((t) => t.green));
+    const b = median(tallies.map((t) => t.blue));
+    const p = median(tallies.map((t) => t.purple));
 
-    expect(g, '绿装产量不该低于凡品').toBeLessThan(c);
+    expect(g, '绿装产量不该不低于凡品').toBeLessThan(c);
     expect(b, '蓝装比绿装还多，梯度断了').toBeLessThan(g);
     expect(p, `紫装中位 ${p} 件，不比蓝装少，塔尖没保住`).toBeLessThan(b);
     expect(p, '两小时一件紫都没有，梯度断了').toBeGreaterThanOrEqual(1);
@@ -157,32 +155,11 @@ describe('刷起来爽不爽：掉落节奏与品质梯度', () => {
 });
 
 describe('垃圾有没有出口：拆解撑得起强化', () => {
-  it('2 小时的挂机攒下的矿，够把一件装备点到 +3 还有富余', () => {
-    const rng = createRng(20260104);
-    const equipped: Partial<Record<SlotId, Item>> = {};
-    const world = createWorld({ rng, floorId: 'f1', equipped });
-    const stash: Item[] = [];
-    const deps = {
-      rng,
-      equipped,
-      onLoot: (item: Item) => {
-        stash.push(item);
-        while (stash.length >= 80) {
-          const v =
-            stash.find((i) => i.rarity === 'common') ?? stash.find((i) => i.rarity === 'green');
-          if (!v) break;
-          stash.splice(stash.indexOf(v), 1);
-          world.player.ore += salvageYieldOf(v.rarity);
-        }
-      },
-      onKill: () => {},
-    };
-    for (let i = 0; i < Math.round((120 * MIN) / TICK_SECONDS); i++) {
-      if (world.interrupted) resumeFarming(world, rng);
-      stepWorld(world, deps);
-    }
+  it('2 小时挂机攒下的矿，够把一件装备点到 +3', () => {
     // +1/+2/+3 共需矿 2+4+6 = 12
-    expect(world.player.ore, `2 小时只攒到 ${world.player.ore} 矿`).toBeGreaterThanOrEqual(12);
+    const ore = medianOf(120 * MIN, (r) => r.ore);
+    expect(ore, `2 小时只攒到 ${ore} 矿`).not.toBeNull();
+    expect(ore!).toBeGreaterThanOrEqual(12);
   });
 });
 
@@ -208,9 +185,9 @@ describe('变强感够不够：换一件看得出差别', () => {
 
 describe('挂机是不是真的省心', () => {
   it('30 分钟内被中断的次数是个位数：不需要人一直盯着', () => {
-    const interruptions = SEEDS.map((seed) => farm(createRng(seed + 30 * MIN), 30 * MIN).interruptions);
-    interruptions.sort((a, b) => a - b);
-    const median = interruptions[Math.floor(interruptions.length / 2)]!;
+    const xs = SEEDS.map((seed) => farm(createRng(seed + 30 * MIN), 30 * MIN).interruptions);
+    xs.sort((a, b) => a - b);
+    const median = xs[Math.floor(xs.length / 2)]!;
     expect(median, `30 分钟被打断中位 ${median} 次，太频繁`).toBeLessThanOrEqual(10);
   });
 
