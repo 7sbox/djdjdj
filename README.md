@@ -9,7 +9,7 @@
 ```bash
 pnpm install
 pnpm dev      # http://localhost:5273
-pnpm test     # 66 项逻辑测试
+pnpm test     # 71 项逻辑测试
 pnpm build    # 类型检查 + 打包
 ```
 
